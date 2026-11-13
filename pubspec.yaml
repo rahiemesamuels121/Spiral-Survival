@@ -1,0 +1,24 @@
+name: spiral_pass_play
+description: Offline spiral board game with dice animation, event cards and turn hand-off.
+publish_to: none
+version: 1.0.0+3
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flame: ^1.38.2
+  shared_preferences: ^2.5.6
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  shared_preferences_platform_interface: ^2.4.1
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/boards/spiral_board_map.json
