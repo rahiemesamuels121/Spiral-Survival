@@ -55,6 +55,7 @@ void main() {
         () {
           final game = weaponGame(from: 10, dice: roll);
           final player = game.session.players.first;
+          final cash = player.cash;
           player.inventory.stabbers = weapon == WeaponType.stabber ? 1 : 0;
           player.inventory.pewPews = weapon == WeaponType.pewPew ? 1 : 0;
           game.session.players[1].position = 10;
@@ -72,6 +73,10 @@ void main() {
             expect(game.session.players[1].position, 0);
             expect(game.weaponCount(weapon), 0);
             expect(player.position, 10);
+            expect(player.inventory.stars, 3);
+            expect(player.cash, cash);
+            expect(game.useWeapon(weapon, 1), isFalse);
+            expect(player.inventory.stars, 3);
             game.finishAnimation();
             game.dismissTileSummary();
             expect(game.session.phase, TurnPhase.handoff);
@@ -182,6 +187,8 @@ void main() {
           expect(restored.session.players[1].cash, 70);
           expect(restored.session.players[1].inventory.antidotes, 1);
           expect(restored.weaponCount(type), 0);
+          expect(restored.session.players.first.inventory.stars, 3);
+          expect(restored.session.players.first.cash, 100);
           expect(
             restored.weaponCount(
               type == WeaponType.stabber
@@ -191,6 +198,7 @@ void main() {
             1,
           );
           expect(restored.useWeapon(type, 1), isFalse);
+          expect(restored.session.players.first.inventory.stars, 3);
           restored.finishAnimation();
           restored.dismissTileSummary();
           expect(restored.session.phase, TurnPhase.handoff);
@@ -242,7 +250,87 @@ void main() {
     expect(game.session.phase, TurnPhase.handoff);
     expect(game.session.players.first.inventory.pewPews, 1);
     expect(game.session.players[1].position, 20);
+    expect(game.session.players.first.inventory.stars, 0);
   });
+
+  test('Kills add three stars to existing stars across turns without cash', () {
+    final game = weaponGame();
+    final attacker = game.session.players.first;
+    attacker.inventory
+      ..stabbers = 2
+      ..stars = 2;
+    game.session.players[1].position = 17;
+    game.roll();
+    game.finishAnimation();
+    expect(game.useWeapon(WeaponType.stabber, 1), isTrue);
+    expect(attacker.inventory.stars, 5);
+    expect(attacker.cash, 100);
+    game.finishAnimation();
+    game.dismissTileSummary();
+    for (var opponent = 1; opponent <= 2; opponent++) {
+      expect(game.session.currentPlayerIndex, opponent);
+      game.acknowledgeHandoff();
+      game.roll();
+      game.finishAnimation();
+    }
+    game.acknowledgeHandoff();
+    expect(game.session.currentPlayerIndex, 0);
+    game.session.players[1].position = 23;
+    game.roll();
+    game.finishAnimation();
+    expect(game.useWeapon(WeaponType.stabber, 1), isTrue);
+    expect(attacker.inventory.stars, 8);
+    expect(attacker.inventory.stabbers, 0);
+    expect(attacker.cash, 100);
+    final restored = GameController(
+      session: GameSession.fromJson(game.session.toJson()),
+      board: game.board,
+    );
+    addTearDown(restored.dispose);
+    expect(restored.session.players.first.inventory.stars, 8);
+    expect(restored.useWeapon(WeaponType.stabber, 1), isFalse);
+    expect(restored.session.players.first.inventory.stars, 8);
+    expect(restored.session.players.first.cash, 100);
+  });
+
+  test(
+    'Kill stars cause a full sentence on the next move into police range',
+    () {
+      final game = weaponGame(
+        board: weaponBoard(police: 20, jails: [10, 30]),
+        from: 16,
+        dice: 4,
+      );
+      final attacker = game.session.players.first;
+      attacker.inventory
+        ..stabbers = 1
+        ..stars = 1;
+      game.session.players[1].position = 16;
+      game.roll();
+      expect(game.session.phase, TurnPhase.preMoveWeaponChoice);
+      expect(game.useWeapon(WeaponType.stabber, 1), isTrue);
+      expect(attacker.inventory.stars, 4);
+      expect(attacker.inventory.hasWeapons, isFalse);
+      expect(attacker.cash, 100);
+      game.finishAnimation();
+      game.dismissTileSummary();
+      for (var opponent = 1; opponent <= 2; opponent++) {
+        game.acknowledgeHandoff();
+        game.roll();
+        game.finishAnimation();
+      }
+      game.acknowledgeHandoff();
+      expect(game.session.currentPlayerIndex, 0);
+      expect(game.roll()!.path, [17, 10]);
+      expect(attacker.position, 10);
+      expect(attacker.inventory.stars, 0);
+      expect(attacker.skipTurns, 4);
+      expect(attacker.cash, 100);
+      expect(game.session.pendingPoliceFine, isNull);
+      game.finishAnimation();
+      expect(game.session.phase, TurnPhase.specialReview);
+    },
+  );
 
   for (final position in [17, 23]) {
     test(
@@ -259,7 +347,9 @@ void main() {
         player.inventory.antidotes = 1;
         game.session.players[1].position = 25;
         final result = game.roll()!;
-        expect(result.path, [position, position == 17 ? 10 : 30]);
+        expect(result.path, [position]);
+        expect(player.position, position);
+        expect(game.session.pendingPoliceJail, position == 17 ? 10 : 30);
         expect(player.inventory.stabbers, 0);
         expect(player.inventory.pewPews, 0);
         expect(player.inventory.boats, 1);
@@ -280,8 +370,9 @@ void main() {
         from: 14,
       );
       game.session.players.first.inventory.pewPews = 1;
-      expect(game.roll()!.path, [15, 16, 17, 10]);
-      expect(game.session.players.first.position, 10);
+      expect(game.roll()!.path, [15, 16, 17]);
+      expect(game.session.players.first.position, 17);
+      expect(game.session.pendingPoliceJail, 10);
       expect(game.session.players.first.inventory.hasWeapons, isFalse);
     },
   );
@@ -312,12 +403,16 @@ void main() {
       expect(game.buyWeapon(WeaponType.stabber), isTrue);
       expect(game.session.players.first.cash, 60);
       expect(game.session.players.first.inventory.stabbers, 0);
-      expect(game.session.players.first.position, 3);
+      expect(game.session.players.first.position, 7);
+      expect(game.session.pendingPoliceJail, 3);
       expect(game.session.pendingShopTile, isNull);
       expect(game.session.phase, TurnPhase.animating);
       game.finishAnimation();
       expect(game.session.phase, TurnPhase.jailChoice);
       game.choosePolicePenalty(payFine: false);
+      expect(game.session.players.first.position, 3);
+      expect(game.session.phase, TurnPhase.animating);
+      game.finishAnimation();
       game.dismissTileSummary();
       expect(game.session.phase, TurnPhase.handoff);
       expect(game.session.players.first.skipTurns, 1);
@@ -331,9 +426,10 @@ void main() {
     final game = weaponGame(board: BoardDefinition(tiles), from: 11, dice: 1);
     game.session.players.first.inventory.stabbers = 1;
     final action = game.roll()!;
-    expect(action.path, [12, 13, 14, 15, 16, 17, 10]);
+    expect(action.path, [12, 13, 14, 15, 16, 17]);
     expect(game.session.players.first.inventory.stabbers, 0);
-    expect(game.session.players.first.position, 10);
+    expect(game.session.players.first.position, 17);
+    expect(game.session.pendingPoliceJail, 10);
     game.finishAnimation();
     expect(game.session.phase, TurnPhase.jailChoice);
   });
@@ -354,10 +450,14 @@ void main() {
     addTearDown(restored.dispose);
     expect(restored.session.phase, TurnPhase.jailChoice);
     expect(restored.session.players.first.inventory.hasWeapons, isFalse);
+    expect(restored.session.players.first.position, 17);
+    expect(restored.session.pendingPoliceJail, 10);
     restored.choosePolicePenalty(payFine: true);
     restored.dismissTileSummary();
     expect(restored.session.phase, TurnPhase.handoff);
     expect(restored.session.players.first.cash, 80);
+    expect(restored.session.players.first.position, 17);
+    expect(restored.session.players.first.skipTurns, 0);
   });
 
   test(

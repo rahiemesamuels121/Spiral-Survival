@@ -142,6 +142,11 @@ class BoardArtwork {
     final fill = tile.fillColor != null
         ? colorHex(tile.fillColor!)
         : switch (tile.type) {
+            TileType.mine => switch (tile.mineColor) {
+              MineColor.red => '#B73542',
+              MineColor.blue => '#236DC1',
+              MineColor.green => '#27834C',
+            },
             TileType.normal => tile.index.isEven ? '#F8F1E2' : '#EFE5D1',
             TileType.start || TileType.boat || TileType.sea => 'url(#blue)',
             TileType.rawMeat ||

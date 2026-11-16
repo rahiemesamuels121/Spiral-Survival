@@ -10,14 +10,26 @@ import '../application/game_controller.dart';
 import '../data/session_store.dart';
 import '../domain/event_card.dart';
 import '../domain/game_session.dart';
+import '../domain/medical_item.dart';
 import '../domain/player_state.dart';
 import '../domain/weapon.dart';
 import '../flame/spiral_board_game.dart';
 import 'turn_result_visual.dart';
+import 'player_avatar.dart';
+import 'weapon_action_overlay.dart';
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({required this.controller, super.key});
+  const GameScreen({
+    required this.controller,
+    this.online = false,
+    this.canInteract,
+    this.onlineStatus,
+    super.key,
+  });
   final GameController controller;
+  final bool online;
+  final bool Function()? canInteract;
+  final String Function()? onlineStatus;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -32,6 +44,33 @@ class _GameScreenState extends State<GameScreen>
   String? _lastQueuedSave;
   bool _showDiceResult = false;
   double _gestureScale = 1;
+
+  GameSession get _displaySession =>
+      widget.controller.localResult ?? widget.controller.session;
+
+  String? get _viewerId => widget.online
+      ? widget.controller.localPlayerId
+      : widget.controller.session.currentPlayer.id;
+
+  bool _canSeePrivateDetails(PlayerState player) => player.id == _viewerId;
+
+  bool get _hasVisibleOverlay {
+    if (widget.controller.localResult != null) return true;
+    final session = widget.controller.session;
+    switch (session.phase) {
+      case TurnPhase.ready:
+      case TurnPhase.rolling:
+      case TurnPhase.animating:
+      case TurnPhase.portalTravel:
+        return false;
+      case TurnPhase.specialReview:
+      case TurnPhase.eventReveal:
+      case TurnPhase.completed:
+        return true;
+      default:
+        return !widget.online || _canSeePrivateDetails(session.currentPlayer);
+    }
+  }
 
   @override
   void initState() {
@@ -56,6 +95,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _queueSave() {
+    if (widget.online) return;
     // Serialize writes so a quick event dismissal/hand-off cannot cause an
     // older snapshot to finish writing after a newer one.
     final snapshot = jsonEncode(widget.controller.session.toJson());
@@ -71,12 +111,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _syncRendering() {
-    final phase = widget.controller.session.phase;
-    final boardVisible =
-        phase == TurnPhase.ready ||
-        phase == TurnPhase.rolling ||
-        phase == TurnPhase.animating ||
-        phase == TurnPhase.portalTravel;
+    final boardVisible = !_hasVisibleOverlay;
     if (boardVisible) {
       _boardGame.resumeEngine();
     } else {
@@ -139,6 +174,10 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Future<void> _newGame() async {
+    if (widget.online) {
+      Navigator.of(context).pop();
+      return;
+    }
     await _saveTail;
     await _store.clear();
     if (mounted) Navigator.of(context).pop();
@@ -198,11 +237,33 @@ class _GameScreenState extends State<GameScreen>
           // Privacy overlays cover both the board and floating controls.
           AnimatedBuilder(
             animation: widget.controller,
-            builder: (context, _) => _buildStateOverlay(),
+            builder: (context, _) => IgnorePointer(
+              ignoring:
+                  widget.controller.localResult == null &&
+                  !(widget.canInteract?.call() ?? true) &&
+                  widget.controller.session.phase != TurnPhase.completed,
+              child: _buildStateOverlay(),
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _changePlayerIcon() async {
+    final game = widget.controller;
+    final index = widget.online
+        ? game.session.players.indexWhere((p) => p.id == game.localPlayerId)
+        : game.session.currentPlayerIndex;
+    if (index < 0 || !game.canChangePlayerIcon) return;
+    final player = game.session.players[index];
+    final icon = await pickPlayerIcon(
+      context,
+      selected: player.icon,
+      color: Color(player.colorValue),
+      number: index + 1,
+    );
+    if (mounted && icon != null) game.changePlayerIcon(icon);
   }
 
   Widget _buildHud() {
@@ -291,18 +352,37 @@ class _GameScreenState extends State<GameScreen>
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircleAvatar(
-                              radius: 8,
-                              backgroundColor: Color(player.colorValue),
+                            PlayerAvatar(
+                              icon: player.icon,
+                              color: Color(player.colorValue),
+                              number: session.currentPlayerIndex + 1,
+                              radius: 12,
                             ),
                             const SizedBox(width: 8),
                             Flexible(
-                              child: Text(
-                                '${player.name} · ROUND ${session.round}',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${player.name} · ROUND ${session.round}',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (widget.online)
+                                    Text(
+                                      widget.onlineStatus?.call() ??
+                                          'Online room',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: AppTheme.gold,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ],
@@ -323,8 +403,21 @@ class _GameScreenState extends State<GameScreen>
                   const SizedBox(width: 8),
                   _hudCard(
                     IconButton(
+                      tooltip: 'Change player icon',
+                      onPressed:
+                          !moving &&
+                              !_hasVisibleOverlay &&
+                              widget.controller.canChangePlayerIcon
+                          ? _changePlayerIcon
+                          : null,
+                      icon: const Icon(Icons.face),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _hudCard(
+                    IconButton(
                       tooltip: 'Players and inventory',
-                      onPressed: session.phase == TurnPhase.ready
+                      onPressed: !moving && !_hasVisibleOverlay
                           ? _showGameDetails
                           : null,
                       icon: const Icon(Icons.inventory_2_outlined),
@@ -360,7 +453,9 @@ class _GameScreenState extends State<GameScreen>
                           _buildDie(),
                           const SizedBox(width: 12),
                           FilledButton.icon(
-                            onPressed: session.phase == TurnPhase.ready
+                            onPressed:
+                                session.phase == TurnPhase.ready &&
+                                    (widget.canInteract?.call() ?? true)
                                 ? _rollDice
                                 : null,
                             icon: const Icon(Icons.casino),
@@ -391,7 +486,9 @@ class _GameScreenState extends State<GameScreen>
                         vertical: 8,
                       ),
                       child: Text(
-                        _withoutTileNumbers(session.message),
+                        widget.online
+                            ? '${session.players[widget.controller.lastOutcome?.playerIndex ?? session.currentPlayerIndex].name} is moving.'
+                            : _withoutTileNumbers(session.message),
                         textAlign: TextAlign.center,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -480,19 +577,25 @@ class _GameScreenState extends State<GameScreen>
                       _playerRow(player),
                     const SizedBox(height: 12),
                     Text(
-                      _withoutTileNumbers(widget.controller.session.message),
+                      widget.online
+                          ? '${widget.controller.session.currentPlayer.name}’s turn.'
+                          : _withoutTileNumbers(
+                              widget.controller.session.message,
+                            ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      widget
-                          .controller
-                          .board
-                          .tiles[widget
-                              .controller
-                              .session
-                              .currentPlayer
-                              .position]
-                          .typeLabel,
+                      widget.online
+                          ? 'Current tile: ${widget.controller.session.currentPlayer.position}'
+                          : widget
+                                .controller
+                                .board
+                                .tiles[widget
+                                    .controller
+                                    .session
+                                    .currentPlayer
+                                    .position]
+                                .typeLabel,
                       style: const TextStyle(color: AppTheme.gold),
                     ),
                     OutlinedButton.icon(
@@ -514,47 +617,104 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _playerRow(PlayerState p) {
+    if (!_canSeePrivateDetails(p)) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            PlayerAvatar(
+              icon: p.icon,
+              color: Color(p.colorValue),
+              number:
+                  widget.controller.session.players.indexWhere(
+                    (player) => player.id == p.id,
+                  ) +
+                  1,
+              radius: 12,
+            ),
+            const SizedBox(width: 7),
+            Expanded(child: Text(p.name)),
+            Text(
+              'Tile ${p.position}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          CircleAvatar(backgroundColor: Color(p.colorValue), radius: 10),
+          PlayerAvatar(
+            icon: p.icon,
+            color: Color(p.colorValue),
+            number:
+                widget.controller.session.players.indexWhere(
+                  (player) => player.id == p.id,
+                ) +
+                1,
+            radius: 12,
+          ),
           const SizedBox(width: 7),
           Expanded(
-            child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-          if (p.skipTurns > 0) ...[
-            const Icon(Icons.lock_clock, color: Color(0xFFFFC66E), size: 14),
-            Text('${p.skipTurns}', style: const TextStyle(fontSize: 12)),
-            const SizedBox(width: 6),
-          ],
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('\$${p.cash}', style: const TextStyle(color: AppTheme.gold)),
-              Text(
-                'Boats ${p.inventory.boats} · Antidotes ${p.inventory.antidotes} · Raw meat ${p.inventory.rawMeat}',
-                style: const TextStyle(color: Colors.white70, fontSize: 10),
-              ),
-              Text(
-                'Stabbers ${p.inventory.stabbers} · Pew pews ${p.inventory.pewPews}',
-                style: const TextStyle(color: Colors.white70, fontSize: 10),
-              ),
-              Text(
-                'Stars ${p.inventory.stars}',
-                style: const TextStyle(color: AppTheme.gold, fontSize: 10),
-              ),
-              if (p.reverseNextMove)
-                const Text(
-                  'Next move: BACKWARDS',
-                  style: TextStyle(color: AppTheme.gold, fontSize: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text(p.name)),
+                    if (p.skipTurns > 0) ...[
+                      const Icon(
+                        Icons.lock_clock,
+                        color: Color(0xFFFFC66E),
+                        size: 14,
+                      ),
+                      Text(
+                        '${p.skipTurns}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      '\$${p.cash}',
+                      style: const TextStyle(color: AppTheme.gold),
+                    ),
+                  ],
                 ),
-              if (p.debt > 0)
                 Text(
-                  'Debt \$${p.debt}',
-                  style: const TextStyle(color: Colors.white60, fontSize: 10),
+                  '${p.isInjured ? 'Injured' : 'Healthy'} · Health packs ${p.inventory.healthPacks}',
+                  style: TextStyle(
+                    color: p.isInjured
+                        ? const Color(0xFFFFC66E)
+                        : Colors.white70,
+                    fontSize: 12,
+                  ),
                 ),
-            ],
+                Text(
+                  'Boats ${p.inventory.boats} · Antidotes ${p.inventory.antidotes} · Raw meat ${p.inventory.rawMeat}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 10),
+                ),
+                Text(
+                  'Stabbers ${p.inventory.stabbers} · Pew pews ${p.inventory.pewPews}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 10),
+                ),
+                Text(
+                  'Stars ${p.inventory.stars}',
+                  style: const TextStyle(color: AppTheme.gold, fontSize: 10),
+                ),
+                if (p.reverseNextMove)
+                  const Text(
+                    'Next move: BACKWARDS',
+                    style: TextStyle(color: AppTheme.gold, fontSize: 10),
+                  ),
+                if (p.debt > 0)
+                  Text(
+                    'Debt \$${p.debt}',
+                    style: const TextStyle(color: Colors.white60, fontSize: 10),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -562,59 +722,34 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _buildStateOverlay() {
-    final session = widget.controller.session;
+    if (!_hasVisibleOverlay) return const SizedBox.shrink();
+    final session = _displaySession;
     switch (session.phase) {
       case TurnPhase.portalChoice:
         return _portalChoiceOverlay();
       case TurnPhase.shopping:
-        return _fullScreenMessage(
-          icon: Icons.storefront_outlined,
-          heading: 'WEAPON SHOP',
-          subtitle:
-              'Purchases are optional. Cash: \$${session.currentPlayer.cash}. '
-              'Before moving, a 4, 5 or 6 lets you attack someone sharing your tile instead. Ranged attacks after moving need a 6. Each attack uses up one weapon. '
-              'Carrying weapons within 3 spaces of police leads to arrest and confiscation.',
-          highlightedName: session.currentPlayer.name,
-          highlightColor: AppTheme.gold,
-          extraContent: _shopChoices(),
-          buttonLabel: 'DONE SHOPPING',
-          onPressed: widget.controller.finishShopping,
-        );
+        return _shoppingOverlay();
       case TurnPhase.preMoveWeaponChoice:
-        return _fullScreenMessage(
-          icon: Icons.alt_route_rounded,
-          heading: 'YOU ROLLED A ${session.lastDice}',
-          subtitle:
-              'Move using this roll, or use one weapon on one player sharing your tile. Attacking replaces your move and uses up the weapon.',
-          highlightedName: 'MOVE OR ATTACK',
-          highlightColor: AppTheme.gold,
-          extraContent: _weaponChoices(),
-          buttonLabel: 'MOVE ${session.lastDice} SPACES',
-          buttonIcon: Icons.directions_walk,
-          onPressed: widget.controller.chooseMovement,
-        );
       case TurnPhase.weaponAction:
-        return _fullScreenMessage(
-          icon: Icons.flash_on_outlined,
-          heading: 'YOU ROLLED A ${session.lastDice}',
-          subtitle:
-              'You may use one weapon on a player within range, or end your turn. '
-              'Range is measured from your position after moving, in either direction.',
-          highlightedName: 'CHOOSE A TARGET',
-          highlightColor: AppTheme.gold,
-          extraContent: _weaponChoices(),
-          buttonLabel: 'END TURN',
-          onPressed: widget.controller.skipWeaponAction,
-        );
+        return WeaponActionOverlay(controller: widget.controller);
       case TurnPhase.hospitalChoice:
         return _fullScreenMessage(
           icon: Icons.local_hospital_rounded,
           heading: 'HOSPITAL',
           subtitle:
-              'Treatment costs 10 coins. Pay to stay here, or restart at START for free. Your coins: ${session.currentPlayer.cash}.',
-          highlightedName: 'TREATMENT OR RESTART',
+              'You are injured. Pay 10 coins or use a health pack for treatment, then shop for medical supplies. You can also restart at START for free. Cash: \$${session.currentPlayer.cash}.',
+          highlightedName: 'INJURY TREATMENT',
           highlightColor: AppTheme.gold,
           details: _summaryDetails(),
+          extraContent: session.currentPlayer.inventory.healthPacks > 0
+              ? _catalogButton(
+                  label: 'USE HEALTH PACK',
+                  details:
+                      'Owned ${session.currentPlayer.inventory.healthPacks} · No treatment fee',
+                  icon: Icons.medical_services_outlined,
+                  onPressed: widget.controller.useHealthPack,
+                )
+              : null,
           buttonLabel: 'PAY 10 COINS',
           buttonIcon: Icons.payments_rounded,
           onPressed: session.currentPlayer.cash >= 10
@@ -636,18 +771,18 @@ class _GameScreenState extends State<GameScreen>
           ),
           heading: 'POLICE · CHOOSE YOUR PENALTY',
           subtitle:
-              '${session.message}\n\nPay \$$fine or miss one turn. '
+              '${session.message}\n\nPay a \$$fine bribe to stay here, or go to jail and miss one turn. '
               'Your cash: \$${player.cash}.'
-              '${canPay ? '' : '\nNot enough cash to pay the fine.'}',
-          highlightedName: 'JAIL',
+              '${canPay ? '' : '\nNot enough cash to pay the bribe.'}',
+          highlightedName: 'BRIBE OR JAIL',
           highlightColor: AppTheme.gold,
           details: _summaryDetails(),
-          buttonLabel: 'PAY \$$fine',
+          buttonLabel: 'BRIBE \$$fine',
           buttonIcon: Icons.payments_rounded,
           onPressed: canPay
               ? () => widget.controller.choosePolicePenalty(payFine: true)
               : null,
-          secondaryButtonLabel: 'MISS ONE TURN',
+          secondaryButtonLabel: 'GO TO JAIL',
           onSecondaryPressed: () =>
               widget.controller.choosePolicePenalty(payFine: false),
         );
@@ -666,7 +801,7 @@ class _GameScreenState extends State<GameScreen>
           highlightedName: summary.title,
           highlightColor: AppTheme.gold,
           buttonLabel: 'CONTINUE',
-          onPressed: widget.controller.dismissTileSummary,
+          onPressed: _dismissDisplayedResult,
         );
       case TurnPhase.handoff:
         return _fullScreenMessage(
@@ -693,7 +828,7 @@ class _GameScreenState extends State<GameScreen>
           details: _summaryDetails(),
           highlightColor: AppTheme.gold,
           buttonLabel: 'CONTINUE',
-          onPressed: widget.controller.dismissEventCard,
+          onPressed: _dismissDisplayedResult,
         );
       case TurnPhase.completed:
         final winner = session.players.firstWhere(
@@ -707,7 +842,7 @@ class _GameScreenState extends State<GameScreen>
               'Congratulations! 🏆',
           highlightedName: winner.name,
           highlightColor: Color(winner.colorValue),
-          buttonLabel: 'PLAY AGAIN',
+          buttonLabel: widget.online ? 'BACK TO ROOM' : 'PLAY AGAIN',
           onPressed: _newGame,
         );
       case TurnPhase.ready:
@@ -715,6 +850,16 @@ class _GameScreenState extends State<GameScreen>
       case TurnPhase.animating:
       case TurnPhase.portalTravel:
         return const SizedBox.shrink();
+    }
+  }
+
+  void _dismissDisplayedResult() {
+    if (widget.controller.localResult != null) {
+      widget.controller.dismissLocalResult();
+    } else if (widget.controller.session.phase == TurnPhase.eventReveal) {
+      widget.controller.dismissEventCard();
+    } else {
+      widget.controller.dismissTileSummary();
     }
   }
 
@@ -734,16 +879,16 @@ class _GameScreenState extends State<GameScreen>
       .replaceAll('Added to inventory.', '')
       .replaceAll('No additional missed turns.', '')
       .replaceAll(
-        'Treatment costs 10 coins. You do not have enough coins, so you returned to START.',
-        'Not enough coins for treatment. Restart at START.',
+        'Treatment costs 10 coins. You do not have enough coins or a health pack, so you recovered at START.',
+        'No coins or health pack for treatment. Recovered at START.',
       )
       .replaceAll(
-        'You paid 10 coins for treatment. Stay at HOSPITAL.',
-        'Paid 10 coins. Stay at HOSPITAL.',
+        'You paid 10 coins for treatment and are healthy.',
+        'Paid 10 coins. You are healthy.',
       )
       .replaceAll(
-        'You chose to restart at START. No coins were charged.',
-        'Restarted at START for free.',
+        'You recovered at START. No coins were charged.',
+        'Recovered at START for free.',
       )
       .replaceAll(
         'your boat carried you safely to space',
@@ -770,15 +915,14 @@ class _GameScreenState extends State<GameScreen>
   // the same arithmetic rather than counting the gain twice.
   String _formatAddition(String detail) {
     final match = RegExp(
-      r'^(Cash|Boats|Antidotes|Raw meat|Stabbers|Pew pews|Stars|Stabber|Pew pew): \+\$?(\d+) \((\d+) → (\d+)\)$',
+      r'^(Cash|Boats|Antidotes|Raw meat|Stabbers|Pew pews|Stars|Stabber|Pew pew|Health packs|Health pack|Antidote): \+\$?(\d+) \((\d+) → (\d+)\)$',
     ).firstMatch(detail);
     if (match == null) return _withoutTileNumbers(detail);
     return '${match[1]}: ${match[3]} + ${match[2]}';
   }
 
   List<String> _additionDetails() {
-    final changes =
-        widget.controller.session.tileSummary?.changes ?? const <String>[];
+    final changes = _displaySession.tileSummary?.changes ?? const <String>[];
     return [
       for (final detail in changes)
         if (_formatAddition(detail) != _withoutTileNumbers(detail))
@@ -787,7 +931,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   List<String> _summaryDetails() {
-    final summary = widget.controller.session.tileSummary;
+    final summary = _displaySession.tileSummary;
     if (summary == null) return const [];
     return [...summary.changes.map(_formatAddition)];
   }
@@ -932,75 +1076,199 @@ class _GameScreenState extends State<GameScreen>
     ),
   );
 
-  Widget _shopChoices() => Column(
-    children: [
-      for (final weapon in WeaponType.values)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed:
-                  widget.controller.session.currentPlayer.cash >=
-                      widget.controller.session.weaponRules.price(weapon)
-                  ? () => widget.controller.buyWeapon(weapon)
-                  : null,
-              icon: Icon(
-                weapon == WeaponType.stabber
-                    ? Icons.hardware_outlined
-                    : Icons.flash_on_outlined,
-              ),
-              label: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Column(
-                  children: [
-                    Text(
-                      'BUY ${weapon.label.toUpperCase()} · \$${widget.controller.session.weaponRules.price(weapon)}',
-                    ),
-                    Text(
-                      'Range ${weapon.range} · Owned ${widget.controller.weaponCount(weapon)}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
+  Widget _shoppingOverlay() {
+    final game = widget.controller;
+    final player = game.session.currentPlayer;
+    final hospital = game.isHospitalShopping;
+    return Container(
+      color: AppTheme.navy,
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            key: const ValueKey('shop-scroll'),
+            padding: const EdgeInsets.all(12),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 860),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppTheme.ivory,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: AppTheme.gold),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            hospital
+                                ? Icons.local_hospital_outlined
+                                : Icons.storefront_outlined,
+                            color: AppTheme.teal,
+                            size: 30,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              hospital ? 'HOSPITAL SHOP' : 'WEAPON SHOP',
+                              style: const TextStyle(
+                                color: AppTheme.ink,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${player.name} · Cash: \$${player.cash}. Purchases are optional.${hospital ? ' You are healthy; no treatment fee.' : ''}',
+                        style: const TextStyle(color: AppTheme.ink),
+                      ),
+                      const SizedBox(height: 14),
+                      _shopChoices(),
+                      if (hospital &&
+                          game.session.tileSummary != null &&
+                          game.session.tileSummary!.changes.any(
+                            (change) =>
+                                change.startsWith('Health pack: +') ||
+                                change.startsWith('Antidote: +'),
+                          )) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          game.session.tileSummary!.changes
+                              .where(
+                                (change) =>
+                                    change.startsWith('Health pack: +') ||
+                                    change.startsWith('Antidote: +'),
+                              )
+                              .join(' · '),
+                          key: const ValueKey('medical-purchase-confirmation'),
+                          style: const TextStyle(color: AppTheme.teal),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      Text(
+                        hospital
+                            ? 'A health pack is used automatically after a green mine, a blue mine injury, a lion attack, fire or trap door so you stay on that tile. Antidotes protect against snakes; without one, return to the antidote tile.'
+                            : 'Same-tile attacks need a 4, 5 or 6; ranged attacks need a 6 after moving. Each attack uses one weapon and earns 3 stars, with no cash reward. Police within 3 spaces arrest armed or starred players.',
+                        style: const TextStyle(
+                          color: Color(0xFF475959),
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppTheme.teal,
+                          foregroundColor: AppTheme.ivory,
+                          minimumSize: const Size.fromHeight(50),
+                        ),
+                        onPressed: game.finishShopping,
+                        icon: const Icon(Icons.check_circle_outline),
+                        label: const Text('DONE SHOPPING'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
-    ],
-  );
+      ),
+    );
+  }
 
-  Widget _weaponChoices() => Column(
-    children: [
-      for (final weapon in WeaponType.values)
-        if (widget.controller.weaponTargets(weapon).isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            widget.controller.session.phase != TurnPhase.preMoveWeaponChoice
-                ? '${weapon.label.toUpperCase()} · WITHIN ${weapon.range} SPACES'
-                : '${weapon.label.toUpperCase()} · SAME TILE',
-            style: const TextStyle(
-              color: AppTheme.gold,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          for (final targetIndex in widget.controller.weaponTargets(weapon))
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () =>
-                      widget.controller.useWeapon(weapon, targetIndex),
-                  child: Text(
-                    'Use ${weapon.label} on ${widget.controller.session.players[targetIndex].name} '
-                    '(${(widget.controller.session.players[targetIndex].position - widget.controller.session.currentPlayer.position).abs()} spaces)',
-                  ),
-                ),
+  Widget _shopChoices() {
+    final game = widget.controller;
+    final player = game.session.currentPlayer;
+    final choices = game.isHospitalShopping
+        ? [
+            for (final item in MedicalItem.values)
+              _catalogButton(
+                label: 'BUY ${item.label.toUpperCase()} · \$${item.price}',
+                details:
+                    'Owned ${item == MedicalItem.healthPack ? player.inventory.healthPacks : player.inventory.antidotes}'
+                    '${player.cash < item.price ? ' · Need \$${item.price - player.cash} more' : ''}',
+                icon: item == MedicalItem.healthPack
+                    ? Icons.medical_services_outlined
+                    : Icons.medication_outlined,
+                onPressed: player.cash >= item.price
+                    ? () => game.buyMedicalItem(item)
+                    : null,
               ),
-            ),
-        ],
-    ],
+          ]
+        : [
+            for (final weapon in WeaponType.values)
+              _catalogButton(
+                label:
+                    'BUY ${weapon.label.toUpperCase()} · \$${game.session.weaponRules.price(weapon)}',
+                details:
+                    'Range ${weapon.range} · Owned ${game.weaponCount(weapon)}',
+                icon: weapon == WeaponType.stabber
+                    ? Icons.hardware_outlined
+                    : Icons.flash_on_outlined,
+                onPressed: player.cash >= game.session.weaponRules.price(weapon)
+                    ? () => game.buyWeapon(weapon)
+                    : null,
+              ),
+          ];
+    return LayoutBuilder(
+      builder: (context, bounds) {
+        if (bounds.maxWidth >= 500) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: choices[0]),
+              const SizedBox(width: 12),
+              Expanded(child: choices[1]),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [choices[0], const SizedBox(height: 12), choices[1]],
+        );
+      },
+    );
+  }
+
+  Widget _catalogButton({
+    required String label,
+    required String details,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) => OutlinedButton.icon(
+    style: OutlinedButton.styleFrom(
+      backgroundColor: const Color(0xFFE9DFC9),
+      disabledBackgroundColor: const Color(0xFFE9E3D6),
+      foregroundColor: AppTheme.ink,
+      disabledForegroundColor: const Color(0xFF68716E),
+      side: const BorderSide(color: Color(0xFF9B8C6E)),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      minimumSize: const Size(0, 76),
+    ),
+    onPressed: onPressed,
+    icon: Icon(icon),
+    label: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          details,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
+    ),
   );
 
   IconData _detailIcon(String detail) {
@@ -1015,6 +1283,9 @@ class _GameScreenState extends State<GameScreen>
     if (text.contains('boat')) return Icons.sailing;
     if (text.contains('raw meat')) return Icons.restaurant;
     if (text.contains('antidote')) return Icons.medication_outlined;
+    if (text.contains('health') || text.contains('injur')) {
+      return Icons.medical_services_outlined;
+    }
     if (text.contains('star')) return Icons.star_rounded;
     return Icons.backpack_outlined;
   }
@@ -1073,26 +1344,22 @@ class _GameScreenState extends State<GameScreen>
                               Icons.person_rounded,
                               size: 16,
                               color: Color(
-                                widget
-                                    .controller
-                                    .session
-                                    .currentPlayer
-                                    .colorValue,
+                                _displaySession.currentPlayer.colorValue,
                               ),
                             ),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
-                                widget.controller.session.currentPlayer.name,
+                                _displaySession.currentPlayer.name,
                                 style: const TextStyle(
                                   color: Color(0xFF254849),
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                             ),
-                            if (widget.controller.session.lastDice != null)
+                            if (_displaySession.lastDice != null)
                               Text(
-                                'ROLL  ${widget.controller.session.lastDice}',
+                                'ROLL  ${_displaySession.lastDice}',
                                 style: const TextStyle(
                                   color: Color(0xFF254849),
                                   fontWeight: FontWeight.w900,

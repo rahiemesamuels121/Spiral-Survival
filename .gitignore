@@ -14,3 +14,14 @@ dist/
 android/key.properties
 *.jks
 *.keystore
+
+# Firebase local tooling and generated configuration
+node_modules/
+.firebase/
+*-debug.log
+firebase_client.json
+google-services.json
+
+# Local editor history and Python caches
+tools/board_editor/backups/
+__pycache__/

@@ -28,6 +28,8 @@ enum TileType {
   finish,
 }
 
+enum MineColor { red, blue, green }
+
 class BoardTile {
   static const artworkValues = [
     'none',
@@ -75,6 +77,7 @@ class BoardTile {
     this.fillColor,
     this.textColor,
     this.artwork,
+    this.mineColor = MineColor.red,
   });
 
   /// Coordinates normalized to [0, 1] against the ORIGINAL board image.
@@ -92,6 +95,7 @@ class BoardTile {
   final int? fillColor;
   final int? textColor;
   final String? artwork;
+  final MineColor mineColor;
 
   Map<String, dynamic> toJson() => {
     'index': index,
@@ -101,6 +105,7 @@ class BoardTile {
     'label': label,
     'segment': segment,
     'amount': amount,
+    if (type == TileType.mine) 'mineColor': mineColor.name,
     'destination': type == TileType.police || type == TileType.portal
         ? null
         : destination,
@@ -132,7 +137,11 @@ class BoardTile {
     TileType.cash => 'COLLECT \$$amount',
     TileType.police => 'POLICE',
     TileType.fine => 'FINE',
-    TileType.mine => 'MINE · RESTART',
+    TileType.mine => switch (mineColor) {
+      MineColor.red => 'RED MINE · DEATH',
+      MineColor.blue => 'BLUE MINE · DEATH OR INJURY',
+      MineColor.green => 'GREEN MINE · HEALTH PACK OR HOSPITAL',
+    },
     TileType.shop => 'SHOP',
     TileType.event => 'EVENT CARD',
     TileType.confusion => 'CONFUSION · NEXT MOVE BACKWARDS',
@@ -172,6 +181,7 @@ class BoardTile {
                     json['label'] == 'RESTART')
           ? 'SEA'
           : json['label'] as String? ?? '',
+      mineColor: MineColor.values.byName(json['mineColor'] as String? ?? 'red'),
       segment: json['segment'] as String? ?? '',
       amount: spiral || json['type'] == 'loan'
           ? 0
@@ -263,6 +273,12 @@ class BoardDefinition {
           (tile.destination == null ||
               tiles[tile.destination!].type != TileType.antidote)) {
         throw ArgumentError('SNAKE tile $i must target an ANTIDOTE tile');
+      }
+      if (tile.type == TileType.mine &&
+          tile.mineColor != MineColor.red &&
+          (tile.destination == null ||
+              tiles[tile.destination!].type != TileType.hospital)) {
+        throw ArgumentError('Mine $i must target a HOSPITAL tile');
       }
       if ((tile.type == TileType.fire ||
               tile.type == TileType.trapDoor ||

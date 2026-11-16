@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../application/game_controller.dart';
 import '../domain/board_definition.dart';
 import '../domain/game_session.dart';
+import '../domain/player_icon.dart';
+import '../presentation/player_avatar.dart';
 import '../vector/board_artwork.dart';
 
 /// Flame owns drawing and movement ONLY. The controller owns the rules.
@@ -231,6 +233,7 @@ class SpiralBoardGame extends FlameGame {
       final player = controller.session.players[i];
       final token = PlayerToken(
         number: i + 1,
+        icon: player.icon,
         color: Color(player.colorValue),
         position: _positionForPlayer(player.position, i),
       );
@@ -265,6 +268,20 @@ class SpiralBoardGame extends FlameGame {
     }
     _wasReady = ready;
     final action = controller.lastOutcome;
+    final movingIndex = action != null && action.sequence > _lastHandledSequence
+        ? action.playerIndex
+        : null;
+    for (final entry in _tokens.entries) {
+      entry.value.setIcon(controller.session.players[entry.key].icon);
+      if (entry.key != movingIndex && entry.value != _cameraToken) {
+        entry.value.position.setFrom(
+          _positionForPlayer(
+            controller.session.players[entry.key].position,
+            entry.key,
+          ),
+        );
+      }
+    }
     if (action == null || action.sequence <= _lastHandledSequence) return;
     _lastHandledSequence = action.sequence;
     if (action.path.isEmpty) {
@@ -436,30 +453,42 @@ class PortalAura extends PositionComponent {
 
 class PlayerToken extends CircleComponent {
   PlayerToken({
-    required int number,
+    required this.number,
     required Color color,
     required super.position,
+    PlayerIcon icon = PlayerIcon.number,
   }) : super(
          radius: 17,
          anchor: Anchor.center,
          paint: Paint()..color = color,
          priority: 10,
-         children: [
-           TextComponent(
-             text: '$number',
-             anchor: Anchor.center,
-             position: Vector2.all(17),
-             textRenderer: TextPaint(
-               style: const TextStyle(
-                 fontSize: 22,
-                 color: Color(0xFF101E29),
-                 fontWeight: FontWeight.w900,
-                 shadows: [Shadow(blurRadius: 3, color: Colors.black)],
-               ),
-             ),
-           ),
-         ],
-       );
+       ) {
+    _caption = TextComponent(anchor: Anchor.center, position: Vector2.all(17));
+    add(_caption);
+    setIcon(icon);
+  }
+
+  final int number;
+  late final TextComponent _caption;
+  PlayerIcon? _icon;
+
+  void setIcon(PlayerIcon icon) {
+    if (_icon == icon) return;
+    _icon = icon;
+    final symbol = icon.symbol;
+    _caption.text = icon == PlayerIcon.number
+        ? '$number'
+        : String.fromCharCode(symbol.codePoint);
+    _caption.textRenderer = TextPaint(
+      style: TextStyle(
+        fontFamily: icon == PlayerIcon.number ? null : symbol.fontFamily,
+        package: icon == PlayerIcon.number ? null : symbol.fontPackage,
+        fontSize: 22,
+        color: const Color(0xFF101E29),
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
 
   final List<Vector2> _queue = [];
   Vector2? _from;

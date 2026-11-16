@@ -1,8 +1,10 @@
-# Spiral Quest 1.0
+# Spiral Quest 1.1.2
 
-An offline Flutter + Flame board game for 2–5 players sharing one Android device. The board has 120 equally spaced tiles in a square spiral. Roll, follow the route, resolve the tile, then pass the device. An exact roll is required to finish.
+A Flutter + Flame board game with offline pass-and-play and private online rooms for 2–5 players. Local play uses one shared Android device; online rooms use a device for each player. Online setup for the `spiral-survival-c4ff0` Firebase project is documented in [multiplayer setup](docs/MULTIPLAYER.md). Each room supports at most five players.
 
-The board editor and Android board import/export channel have been removed from the app. Existing saved boards and matches remain supported, including one-time rule and layout migrations.
+The board has 120 equally spaced tiles in a square spiral. Roll, follow the route, resolve the tile, then pass the device. An exact roll is required to finish.
+
+The in-game board editor and Android board import/export channel remain removed from the app. A separate, dependency-free local helper is now available: [Board Workshop](tools/board_editor/README.md). Double-click `tools/board_editor/Open Board Editor.command` to open it. Existing saved boards and matches remain supported, including one-time rule and layout migrations.
 
 ## Run and verify
 
@@ -45,3 +47,5 @@ Portal movement effects use simple strokes rather than blur filters and shader g
 Performance on physical low-end devices still requires release-mode testing; automated rendering checks verify that the cached board preserves the original pixels.
 
 The premium interface uses midnight navy, antique gold and warm ivory, with semantic tile colors and numbered player markers. Android launcher and launch-screen artwork match the game. Regenerate launcher icons with `flutter test tools/export_app_icon.dart` and UI previews with `flutter test tools/export_ui_previews.dart`.
+
+Normal `flutter run` and `flutter build` commands include the generated Firebase client defaults. Extra Dart defines are optional overrides. The Firebase backend is deployed and billing remains disabled.

@@ -3,6 +3,7 @@ class PlayerInventory {
   PlayerInventory({
     this.boats = 0,
     this.antidotes = 0,
+    this.healthPacks = 0,
     this.rawMeat = 0,
     this.cash = 10,
     this.stabbers = 0,
@@ -11,6 +12,7 @@ class PlayerInventory {
   }) {
     if (boats < 0 ||
         antidotes < 0 ||
+        healthPacks < 0 ||
         rawMeat < 0 ||
         cash < 0 ||
         stabbers < 0 ||
@@ -22,6 +24,7 @@ class PlayerInventory {
 
   int boats;
   int antidotes;
+  int healthPacks;
   int rawMeat;
   int cash;
   int stabbers;
@@ -33,6 +36,7 @@ class PlayerInventory {
   Map<String, dynamic> toJson() => {
     'boats': boats,
     'antidotes': antidotes,
+    'healthPacks': healthPacks,
     'rawMeat': rawMeat,
     'cash': cash,
     'stabbers': stabbers,
@@ -44,6 +48,7 @@ class PlayerInventory {
       PlayerInventory(
         boats: (json['boats'] as num?)?.toInt() ?? 0,
         antidotes: (json['antidotes'] as num?)?.toInt() ?? 0,
+        healthPacks: (json['healthPacks'] as num?)?.toInt() ?? 0,
         rawMeat: (json['rawMeat'] as num?)?.toInt() ?? 0,
         cash: (json['cash'] as num?)?.toInt() ?? 100,
         stabbers: (json['stabbers'] as num?)?.toInt() ?? 0,

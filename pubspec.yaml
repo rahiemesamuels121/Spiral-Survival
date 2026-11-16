@@ -1,7 +1,7 @@
 name: spiral_pass_play
-description: Offline spiral board game with dice animation, event cards and turn hand-off.
+description: Spiral board game with local pass-and-play and private five-player online rooms.
 publish_to: none
-version: 1.0.0+3
+version: 1.1.5+9
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -11,6 +11,9 @@ dependencies:
     sdk: flutter
   flame: ^1.38.2
   shared_preferences: ^2.5.6
+  firebase_core: ^5.1.0
+  firebase_auth: ^7.0.1
+  cloud_firestore: ^7.1.0
 
 dev_dependencies:
   flutter_lints: ^5.0.0

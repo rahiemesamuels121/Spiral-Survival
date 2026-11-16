@@ -41,6 +41,37 @@ void _finish(GameController game) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'Tile 89 grants a star and the cash bonus instead of a jail penalty',
+    () async {
+      final board = await const BoardRepository().loadReferenceBoard();
+      final game = _game(board, 88);
+      final player = game.session.currentPlayer;
+      final before = player.cash;
+      game.roll();
+      expect(player.position, 89);
+      expect(player.inventory.stars, 1);
+      expect(player.cash, before + 25);
+      expect(player.skipTurns, 0);
+    },
+  );
+  for (final protected in [true, false]) {
+    test(
+      'Snake 87 ${protected ? 'consumes an antidote' : 'returns an unprotected player to the antidote'}',
+      () async {
+        final board = await const BoardRepository().loadReferenceBoard();
+        final game = _game(board, 86);
+        final player = game.session.currentPlayer;
+        player.inventory.antidotes = protected ? 1 : 0;
+        final result = game.roll()!;
+        expect(result.path, protected ? [87] : [87, 10]);
+        expect(player.position, protected ? 87 : 10);
+        expect(player.inventory.antidotes, protected ? 0 : 1);
+        game.finishAnimation();
+        expect(game.session.phase, TurnPhase.specialReview);
+      },
+    );
+  }
   for (final stars in [1, 3]) {
     for (final from in [17, 23]) {
       test(
@@ -137,7 +168,7 @@ void main() {
     expect(game.session.currentPlayer.skipTurns, 2);
   });
 
-  for (final index in [65, 68, 70]) {
+  for (final index in [65, 68, 70, 112]) {
     test(
       'Trap door $index sends to hospital 62 and adds exactly one missed turn',
       () async {
@@ -148,6 +179,7 @@ void main() {
         expect(board.tiles[index].type, TileType.trapDoor);
         expect(game.roll()!.path, [index, 62]);
         expect(player.position, 62);
+        expect(player.isInjured, isTrue);
         expect(player.skipTurns, 3);
         game.finishAnimation();
         game.finishAnimation();
@@ -156,6 +188,7 @@ void main() {
         final saved = GameSession.fromJson(game.session.toJson());
         expect(saved.currentPlayer.position, 62);
         expect(saved.currentPlayer.skipTurns, 3);
+        expect(saved.currentPlayer.isInjured, isTrue);
       },
     );
   }
@@ -170,13 +203,14 @@ void main() {
       expect(board.tiles[76].type, TileType.fire);
       expect(game.roll()!.path, [76, 62]);
       expect(player.position, 62);
+      expect(player.isInjured, isTrue);
       expect(player.skipTurns, 2);
       expect(game.session.message, contains('FIRE'));
     },
   );
 
   test(
-    'Hospital arrival preserves inventory while treatment is pending',
+    'Healthy hospital arrival preserves inventory and opens supplies without a fee',
     () async {
       final board = await const BoardRepository().loadReferenceBoard();
       final game = _game(board, 61);
@@ -190,6 +224,11 @@ void main() {
       expect(player.skipTurns, 2);
       expect(player.inventory.stars, 2);
       expect(player.inventory.boats, 1);
+      expect(player.isInjured, isFalse);
+      expect(game.session.pendingHospital, isFalse);
+      game.finishAnimation();
+      expect(game.session.phase, TurnPhase.shopping);
+      expect(game.isHospitalShopping, isTrue);
     },
   );
 
@@ -211,7 +250,7 @@ void main() {
       'Hospital choice survives resume and ${pay ? 'charges exactly ten coins' : 'allows a free restart'}',
       () async {
         final board = await const BoardRepository().loadReferenceBoard();
-        final game = _game(board, 61);
+        final game = _game(board, 64);
         game.session.currentPlayer.cash = 15;
         game.roll();
         game.finishAnimation();
@@ -226,15 +265,20 @@ void main() {
         expect(resumed.session.currentPlayer.cash, pay ? 5 : 15);
         expect(resumed.session.currentPlayer.position, pay ? 62 : 0);
         expect(resumed.session.pendingHospital, isFalse);
-        expect(resumed.session.phase, TurnPhase.specialReview);
+        expect(resumed.session.currentPlayer.isInjured, isFalse);
+        expect(
+          resumed.session.phase,
+          pay ? TurnPhase.shopping : TurnPhase.specialReview,
+        );
         resumed.chooseHospitalTreatment(pay: true);
         expect(resumed.session.currentPlayer.cash, pay ? 5 : 15);
+        if (pay) resumed.finishShopping();
         resumed.dismissTileSummary();
         expect(resumed.session.phase, TurnPhase.handoff);
       },
     );
   }
-  for (final from in [61, 64, 75, 102]) {
+  for (final from in [64, 75, 102]) {
     test(
       'Hospital restarts an unaffordable arrival from $from without debt',
       () async {
@@ -247,6 +291,7 @@ void main() {
         expect(game.session.currentPlayer.cash, 9);
         expect(game.session.currentPlayer.debt, 0);
         expect(game.session.pendingHospital, isFalse);
+        expect(game.session.currentPlayer.isInjured, isFalse);
         expect(game.session.phase, TurnPhase.specialReview);
         expect(game.session.message, contains('not have enough coins'));
       },

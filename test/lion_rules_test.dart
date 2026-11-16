@@ -27,24 +27,24 @@ void main() {
   }
 
   test(
-    'Tile 78 collects raw meat, persists it, and preserves confusion at 102',
+    'Tile 78 collects three raw meat, persists it, and preserves confusion at 102',
     () async {
       final game = await gameAt(77);
       expect(game.board.tiles[78].type, TileType.rawMeat);
       expect(game.board.tiles[102].type, TileType.confusion);
       game.roll();
-      expect(game.session.players.first.inventory.rawMeat, 1);
+      expect(game.session.players.first.inventory.rawMeat, 3);
       game.finishAnimation();
       expect(game.session.phase, TurnPhase.specialReview);
       final restored = GameSession.fromJson(game.session.toJson());
-      expect(restored.players.first.inventory.rawMeat, 1);
+      expect(restored.players.first.inventory.rawMeat, 3);
       expect(
         game.session.tileSummary!.changes,
-        contains('Raw meat: +1 (0 → 1)'),
+        contains('Raw meat: +3 (0 → 3)'),
       );
     },
   );
-  for (final lion in [103, 104, 105, 106, 107]) {
+  for (final lion in [103, 104, 105, 106]) {
     test('Lion $lion sends a player without meat to hospital', () async {
       final game = await gameAt(lion - 1);
       game.session.players.first.cash = 50;
@@ -52,6 +52,7 @@ void main() {
       expect(game.board.tiles[lion].type, TileType.lion);
       expect(outcome.path, [lion, 62]);
       expect(game.session.players.first.position, 62);
+      expect(game.session.players.first.isInjured, isTrue);
       expect(game.session.players.first.skipTurns, 0);
       expect(game.session.players.first.cash, 50);
       expect(game.session.tileSummary!.message, contains('HOSPITAL'));
@@ -59,11 +60,59 @@ void main() {
     test('Lion $lion consumes one meat and lets the player stay', () async {
       final game = await gameAt(lion - 1);
       game.session.players.first.inventory.rawMeat = 2;
+      game.session.players.first.inventory.healthPacks = 1;
       expect(game.roll()!.path, [lion]);
       expect(game.session.players.first.position, lion);
+      expect(game.session.players.first.isInjured, isFalse);
       expect(game.session.players.first.inventory.rawMeat, 1);
+      expect(game.session.players.first.inventory.healthPacks, 1);
     });
   }
+  test(
+    'The three portions collected at tile 78 feed three separate lions',
+    () async {
+      final game = await gameAt(77);
+      final player = game.session.currentPlayer;
+      player.inventory.healthPacks = 1;
+      game.roll();
+      game.finishAnimation();
+      game.dismissTileSummary();
+      expect(player.inventory.rawMeat, 3);
+
+      void nextTurn() {
+        expect(game.session.currentPlayerIndex, 1);
+        game.acknowledgeHandoff();
+        game.roll();
+        game.finishAnimation();
+        if (game.session.phase == TurnPhase.specialReview) {
+          game.dismissTileSummary();
+        }
+        game.acknowledgeHandoff();
+        expect(game.session.currentPlayerIndex, 0);
+      }
+
+      nextTurn();
+      player.position = 102;
+      for (final lion in [103, 104, 105]) {
+        expect(game.roll()!.path, [lion]);
+        expect(player.position, lion);
+        expect(player.inventory.rawMeat, 105 - lion);
+        expect(player.inventory.healthPacks, 1);
+        expect(player.isInjured, isFalse);
+        expect(game.session.pendingHospital, isFalse);
+        game.finishAnimation();
+        game.dismissTileSummary();
+        if (lion != 105) nextTurn();
+      }
+      expect(player.inventory.rawMeat, 0);
+      expect(
+        GameSession.fromJson(
+          game.session.toJson(),
+        ).players.first.inventory.rawMeat,
+        0,
+      );
+    },
+  );
   test('A forced landing on a lion also applies the hospital rule', () async {
     final game = await gameAt(100);
     final tiles = game.board.tiles.toList();
@@ -104,7 +153,7 @@ void main() {
       final board = await repository.loadReferenceBoard();
       final tiles = board.tiles.toList();
       tiles[78] = tiles[78].withChanges({'type': 'normal', 'label': ''});
-      for (var i = 103; i <= 107; i++) {
+      for (var i = 103; i <= 106; i++) {
         tiles[i] = tiles[i].withChanges({
           'type': 'normal',
           'destination': null,

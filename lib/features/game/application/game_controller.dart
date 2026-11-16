@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 import '../domain/board_definition.dart';
 import '../domain/event_card.dart';
 import '../domain/game_session.dart';
+import '../domain/medical_item.dart';
 import '../domain/player_state.dart';
+import '../domain/player_icon.dart';
 import '../domain/tile_summary.dart';
 import '../domain/weapon.dart';
 
@@ -57,16 +59,46 @@ class GameController extends ChangeNotifier {
       EventCards.byId(card); // Invalid saved decks must be rejected.
     }
     if (session.pendingCardId != null) EventCards.byId(session.pendingCardId!);
-    if (session.pendingPoliceFine != null &&
-        board.tiles[session.currentPlayer.position].type != TileType.jail) {
-      throw StateError('A police choice must take place at a jail.');
+    if (session.pendingPoliceFine != null) {
+      final position = session.currentPlayer.position;
+      // Older saves already moved the token to jail before offering payment.
+      // Keep that recorded location; the original interception is unknown.
+      if (session.pendingPoliceJail == null &&
+          board.tiles[position].type == TileType.jail) {
+        session.pendingPoliceJail = position;
+      }
+      final destination = session.pendingPoliceJail;
+      if (session.pendingPoliceFine! <= 0 ||
+          destination == null ||
+          destination < 0 ||
+          destination > board.lastIndex ||
+          board.tiles[destination].type != TileType.jail ||
+          !((position == destination &&
+                  board.tiles[position].type == TileType.jail) ||
+              _nearbyPolice(position) != null)) {
+        throw StateError(
+          'A police choice requires an encounter and a JAIL destination.',
+        );
+      }
+    } else if (session.pendingPoliceJail != null) {
+      throw StateError('A pending JAIL destination requires a police choice.');
+    }
+    if (session.pendingHospital &&
+        (!session.currentPlayer.isInjured ||
+            board.tiles[session.currentPlayer.position].type !=
+                TileType.hospital)) {
+      throw StateError(
+        'Hospital treatment requires an injured player at HOSPITAL.',
+      );
     }
     if (session.pendingShopTile != null &&
         (session.pendingShopTile! < 0 ||
             session.pendingShopTile! > board.lastIndex ||
-            board.tiles[session.pendingShopTile!].type != TileType.shop ||
+            (board.tiles[session.pendingShopTile!].type != TileType.shop &&
+                board.tiles[session.pendingShopTile!].type !=
+                    TileType.hospital) ||
             session.currentPlayer.position != session.pendingShopTile)) {
-      throw StateError('A shop visit must belong to a SHOP tile.');
+      throw StateError('A shop visit must belong to a SHOP or HOSPITAL tile.');
     }
     if (session.pendingPortalTile != null &&
         (session.pendingPortalTile! < 0 ||
@@ -123,12 +155,28 @@ class GameController extends ChangeNotifier {
     );
   }
 
-  final GameSession session;
+  GameSession session;
   final BoardDefinition board;
   final DiceRoller _rollDie;
   int _sequence = 0;
   bool _policeArrestThisResolution = false;
   TurnOutcome? lastOutcome;
+
+  /// Online presentation and identity belong to one device, not the turn owner.
+  GameSession? get localResult => null;
+  String? get localPlayerId => null;
+  void dismissLocalResult() {}
+
+  bool get canChangePlayerIcon => true;
+
+  void changePlayerIcon(PlayerIcon icon) {
+    session.currentPlayer.icon = icon;
+    notifyListeners();
+  }
+
+  bool get isHospitalShopping =>
+      session.pendingShopTile != null &&
+      board.tiles[session.pendingShopTile!].type == TileType.hospital;
 
   static int _secureRoll() => Random.secure().nextInt(6) + 1;
 
@@ -197,6 +245,8 @@ class GameController extends ChangeNotifier {
     final debtBefore = player.debt;
     final boatsBefore = player.inventory.boats;
     final antidotesBefore = player.inventory.antidotes;
+    final healthPacksBefore = player.inventory.healthPacks;
+    final injuredBefore = player.isInjured;
     final meatBefore = player.inventory.rawMeat;
     final stabbersBefore = player.inventory.stabbers;
     final pewPewsBefore = player.inventory.pewPews;
@@ -240,11 +290,15 @@ class GameController extends ChangeNotifier {
     record('Debt', debtBefore, player.debt, money: true);
     record('Boats', boatsBefore, player.inventory.boats);
     record('Antidotes', antidotesBefore, player.inventory.antidotes);
+    record('Health packs', healthPacksBefore, player.inventory.healthPacks);
     record('Raw meat', meatBefore, player.inventory.rawMeat);
     record('Stabbers', stabbersBefore, player.inventory.stabbers);
     record('Pew pews', pewPewsBefore, player.inventory.pewPews);
     record('Stars', starsBefore, player.inventory.stars);
     record('Turns to miss', skipsBefore, player.skipTurns);
+    if (injuredBefore != player.isInjured) {
+      changes.add('Health: ${player.isInjured ? 'INJURED' : 'HEALTHY'}');
+    }
     if (backwards) changes.add('Confusion: backwards move used');
     if (player.reverseNextMove) changes.add('Next move: BACKWARDS');
     final policeCaught =
@@ -288,7 +342,9 @@ class GameController extends ChangeNotifier {
           ? TileType.police
           : effectTile.type,
       effectLabel: policeCaught
-          ? 'POLICE · GO TO JAIL'
+          ? session.pendingPoliceFine != null
+                ? 'POLICE · BRIBE CHOICE'
+                : 'POLICE · GO TO JAIL'
           : effectTile.label.isEmpty
           ? effectTile.type.name
           : effectTile.label,
@@ -405,9 +461,14 @@ class GameController extends ChangeNotifier {
           player.inventory.rawMeat--;
           return 'LION: fed the lion one raw meat. You are safe!';
         }
+        player.isInjured = true;
+        if (_consumeHealthPack(player)) {
+          return 'LION: No raw meat, the lion injured you. Used one health pack '
+              'and recovered here. No hospital visit or treatment fee.';
+        }
         player.position = tile.destination!;
         path.add(player.position);
-        return 'LION: No raw meat, the lion attacked you. Go to HOSPITAL.';
+        return 'LION: No raw meat, the lion injured you. Go to HOSPITAL.';
       case TileType.snake:
         if (player.inventory.antidotes > 0) {
           if (tile.consumesAntidote) player.inventory.antidotes--;
@@ -433,12 +494,11 @@ class GameController extends ChangeNotifier {
       case TileType.police:
         final fine = tile.amount == 0 ? 20 : tile.amount;
         final destination = _nearestJail(tile.index);
-        player.position = destination;
-        path.add(destination);
         session.pendingPoliceFine = fine;
+        session.pendingPoliceJail = destination;
         session.weaponActionTaken = true;
         session.pendingShopTile = null;
-        return 'POLICE: caught and moved to the nearest JAIL at space $destination.';
+        return 'POLICE: stopped here. Choose whether to pay a \$$fine bribe to stay.';
       case TileType.fine:
         final fine = tile.amount == 0 ? 20 : tile.amount;
         player.pay(fine);
@@ -451,6 +511,23 @@ class GameController extends ChangeNotifier {
       case TileType.goToJail:
         return _sendToJail(player, tile.destination!, path);
       case TileType.mine:
+        session.weaponActionTaken = true;
+        // A broken blue mine has an equal chance of death or treatable injury.
+        final fatal =
+            tile.mineColor == MineColor.red ||
+            (tile.mineColor == MineColor.blue && _rollDie() <= 3);
+        if (!fatal) {
+          player.isInjured = true;
+          final color = tile.mineColor.name.toUpperCase();
+          if (_consumeHealthPack(player)) {
+            return '$color MINE: injured, but used one health pack and recovered here. '
+                'No hospital visit or treatment fee.';
+          }
+          player.position = tile.destination!;
+          path.add(player.position);
+          return '$color MINE: injured and sent to HOSPITAL at space ${player.position}.';
+        }
+        player.isInjured = false;
         player.position = 0;
         path.add(0);
         session.weaponActionTaken = true;
@@ -498,26 +575,47 @@ class GameController extends ChangeNotifier {
             'Carrying stars within 3 spaces of POLICE causes a jail sentence.';
       case TileType.hospital:
         session.weaponActionTaken = true;
-        if (player.cash < 10) {
+        if (!player.isInjured) {
+          session.pendingShopTile = tile.index;
+          return 'HOSPITAL: You are healthy. No treatment fee. '
+              'You may buy health packs and antidotes.';
+        }
+        if (player.cash < 10 && player.inventory.healthPacks == 0) {
+          player.isInjured = false;
           player.position = 0;
           path.add(0);
-          return 'HOSPITAL: Treatment costs 10 coins. You do not have enough coins, so you returned to START. Your turn is over.';
+          return 'HOSPITAL: Treatment costs 10 coins. You do not have enough coins '
+              'or a health pack, so you recovered at START. Your turn is over.';
         }
         session.pendingHospital = true;
-        return 'HOSPITAL: Pay 10 coins for treatment, or restart at START for free.';
+        return 'HOSPITAL: You are injured. Pay 10 coins, use a health pack, '
+            'or recover at START for free.';
       case TileType.fire:
       case TileType.trapDoor:
         final trap = tile.type == TileType.trapDoor;
         if (trap) player.skipTurns++;
+        player.isInjured = true;
+        session.weaponActionTaken = true;
+        if (_consumeHealthPack(player)) {
+          return '${trap ? 'TRAP DOOR' : 'FIRE'}: injured, but used one health pack '
+              'and recovered here. No hospital visit or treatment fee.'
+              '${trap ? ' Miss one turn.' : ''}';
+        }
         player.position = tile.destination!;
         path.add(player.position);
-        session.weaponActionTaken = true;
         return trap
-            ? 'TRAP DOOR: miss one turn and go to HOSPITAL at space ${player.position}.'
-            : 'FIRE: sent straight to HOSPITAL at space ${player.position}.';
+            ? 'TRAP DOOR: injured, miss one turn and go to HOSPITAL at space ${player.position}.'
+            : 'FIRE: injured and sent straight to HOSPITAL at space ${player.position}.';
       case TileType.finish:
         return 'Finished the board!';
     }
+  }
+
+  bool _consumeHealthPack(PlayerState player) {
+    if (player.inventory.healthPacks <= 0) return false;
+    player.inventory.healthPacks--;
+    player.isInjured = false;
+    return true;
   }
 
   int _nearestJail(int from) {
@@ -574,14 +672,17 @@ class GameController extends ChangeNotifier {
     player.inventory.stars = 0;
     player.inventory.stabbers = 0;
     player.inventory.pewPews = 0;
-    player.position = destination;
-    path.add(destination);
     session.pendingPoliceFine = stars > 0
         ? null
         : police.amount == 0
         ? 20
         : police.amount;
-    if (stars > 0) player.skipTurns += stars;
+    session.pendingPoliceJail = stars > 0 ? null : destination;
+    if (stars > 0) {
+      player.position = destination;
+      path.add(destination);
+      player.skipTurns += stars;
+    }
     session.pendingShopTile = null;
     session.weaponActionTaken = true;
     if (stars > 0) {
@@ -590,7 +691,8 @@ class GameController extends ChangeNotifier {
           '${hadWeapons ? ' All weapons were confiscated.' : ''}';
     }
     return 'POLICE: carrying weapons within 3 spaces of police tile ${police.index}. '
-        'All weapons were confiscated. Moved to JAIL at space $destination.';
+        'All weapons were confiscated. Choose whether to pay a '
+        '\$${session.pendingPoliceFine} bribe to stay here.';
   }
 
   String _sendToJail(PlayerState player, int destination, List<int> path) {
@@ -675,31 +777,66 @@ class GameController extends ChangeNotifier {
   }
 
   void chooseHospitalTreatment({required bool pay}) {
-    if (session.phase != TurnPhase.hospitalChoice) return;
+    if (session.phase != TurnPhase.hospitalChoice ||
+        !session.pendingHospital ||
+        !session.currentPlayer.isInjured) {
+      return;
+    }
     final player = session.currentPlayer;
     if (pay && player.cash < 10) return;
-    session.pendingHospital = false;
     if (pay) {
       player.cash -= 10;
       session.message =
-          'HOSPITAL: You paid 10 coins for treatment. Stay at HOSPITAL. Your turn is over.';
+          'HOSPITAL: You paid 10 coins for treatment and are healthy. '
+          'You may buy health packs and antidotes before leaving.';
     } else {
       player.position = 0;
       session.message =
-          'HOSPITAL: You chose to restart at START. No coins were charged. Your turn is over.';
+          'HOSPITAL: You recovered at START. No coins were charged. Your turn is over.';
     }
+    _finishHospitalTreatment(
+      title: pay ? 'HOSPITAL · TREATED' : 'HOSPITAL · RESTART',
+      change: pay ? 'Treatment: −10 coins' : 'Returned to START',
+      stay: pay,
+    );
+  }
+
+  void useHealthPack() {
+    if (session.phase != TurnPhase.hospitalChoice ||
+        !session.pendingHospital ||
+        !session.currentPlayer.isInjured ||
+        session.currentPlayer.inventory.healthPacks == 0) {
+      return;
+    }
+    _consumeHealthPack(session.currentPlayer);
+    session.message =
+        'HOSPITAL: You used one health pack and are healthy. No coins were charged. '
+        'You may buy health packs and antidotes before leaving.';
+    _finishHospitalTreatment(
+      title: 'HOSPITAL · TREATED',
+      change: 'Health packs: −1',
+      stay: true,
+    );
+  }
+
+  void _finishHospitalTreatment({
+    required String title,
+    required String change,
+    required bool stay,
+  }) {
+    final player = session.currentPlayer;
+    session.pendingHospital = false;
+    player.isInjured = false;
     final previous = session.tileSummary;
     session.tileSummary = TileSummary(
-      title: pay ? 'HOSPITAL · TREATED' : 'HOSPITAL · RESTART',
+      title: title,
       message: session.message,
       landedIndex: previous?.landedIndex ?? player.position,
       finalPosition: player.position,
-      changes: [
-        ...?previous?.changes,
-        if (pay) 'Treatment: −10 coins' else 'Returned to START',
-      ],
+      changes: [...?previous?.changes, change, 'Health: HEALTHY'],
     );
-    session.phase = TurnPhase.specialReview;
+    session.pendingShopTile = stay ? player.position : null;
+    session.phase = stay ? TurnPhase.shopping : TurnPhase.specialReview;
     notifyListeners();
   }
 
@@ -902,7 +1039,7 @@ class GameController extends ChangeNotifier {
   }
 
   bool buyWeapon(WeaponType type) {
-    if (session.phase != TurnPhase.shopping) return false;
+    if (session.phase != TurnPhase.shopping || isHospitalShopping) return false;
     final player = session.currentPlayer;
     final price = session.weaponRules.price(type);
     if (player.cash < price) return false;
@@ -933,6 +1070,39 @@ class GameController extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+    return true;
+  }
+
+  bool buyMedicalItem(MedicalItem item) {
+    if (session.phase != TurnPhase.shopping || !isHospitalShopping) {
+      return false;
+    }
+    final player = session.currentPlayer;
+    if (player.cash < item.price) return false;
+    final beforeCash = player.cash;
+    final beforeCount = item == MedicalItem.healthPack
+        ? player.inventory.healthPacks
+        : player.inventory.antidotes;
+    player.cash -= item.price;
+    if (item == MedicalItem.healthPack) {
+      player.inventory.healthPacks++;
+    } else {
+      player.inventory.antidotes++;
+    }
+    session.message += ' Bought a ${item.label} for \$${item.price}.';
+    final old = session.tileSummary;
+    session.tileSummary = TileSummary(
+      title: 'HOSPITAL · SUPPLIES',
+      message: session.message,
+      landedIndex: old?.landedIndex ?? player.position,
+      finalPosition: player.position,
+      changes: [
+        ...?old?.changes,
+        'Cash: −\$${item.price} ($beforeCash → ${player.cash})',
+        '${item.label}: +1 ($beforeCount → ${beforeCount + 1})',
+      ],
+    );
+    notifyListeners();
     return true;
   }
 
@@ -994,18 +1164,22 @@ class GameController extends ChangeNotifier {
       return true;
     }
     final target = session.players[targetIndex];
+    final attacker = session.currentPlayer;
     final from = target.position;
     final countBefore = weaponCount(type);
+    final starsBefore = attacker.inventory.stars;
     if (type == WeaponType.stabber) {
       session.currentPlayer.inventory.stabbers--;
     } else {
       session.currentPlayer.inventory.pewPews--;
     }
     target.position = 0;
+    attacker.inventory.stars += 3;
     session.weaponActionTaken = true;
     session.message =
-        '${session.currentPlayer.name} used a ${type.label} on ${target.name}. '
-        '${target.name} returned to START. One ${type.label} was used up.';
+        '${attacker.name} used a ${type.label} on ${target.name}. '
+        '${target.name} returned to START. One ${type.label} was used up. '
+        '${attacker.name} gained 3 stars and no cash.';
     session.tileSummary = TileSummary(
       title: type.label.toUpperCase(),
       message: session.message,
@@ -1014,6 +1188,7 @@ class GameController extends ChangeNotifier {
       changes: [
         '${type.label}: −1 ($countBefore → ${weaponCount(type)})',
         '${target.name}: tile $from → START',
+        'Stars: +3 ($starsBefore → ${attacker.inventory.stars})',
       ],
     );
     session.phase = TurnPhase.animating;
@@ -1030,35 +1205,62 @@ class GameController extends ChangeNotifier {
     return true;
   }
 
-  /// The arrest moves the player immediately; exactly one penalty is chosen
-  /// after movement. Paying requires cash and never adds debt or a missed turn.
+  /// Paying the bribe keeps the interception position; refusing transfers the
+  /// player to jail. Both choices commit once and cannot create debt.
   void choosePolicePenalty({required bool payFine}) {
-    if (session.phase != TurnPhase.jailChoice) return;
+    if (session.phase != TurnPhase.jailChoice ||
+        session.pendingPoliceFine == null) {
+      return;
+    }
     final fine = session.pendingPoliceFine!;
     final player = session.currentPlayer;
     if (payFine && player.cash < fine) return;
+    final from = player.position;
+    final destination =
+        session.pendingPoliceJail ??
+        (board.tiles[from].type == TileType.jail ? from : null);
+    if (destination == null) return;
     final changes = [...?session.tileSummary?.changes];
     if (payFine) {
       final before = player.cash;
       player.cash -= fine;
       changes.add('Cash: −\$$fine ($before → ${player.cash})');
-      session.message += ' Paid the \$$fine fine; no turn is missed.';
+      session.message +=
+          ' Paid the \$$fine bribe and stayed here; no turn is missed.';
     } else {
       final before = player.skipTurns;
       player.skipTurns++;
+      player.position = destination;
       changes.add('Turns to miss: +1 ($before → ${player.skipTurns})');
-      session.message += ' Chose to miss one turn; no fine was charged.';
+      if (from != destination) changes.add('Jail: tile $from → $destination');
+      session.message +=
+          ' Declined the bribe. Sent to JAIL at space $destination '
+          'to miss one turn; no bribe was charged.';
     }
     final previous = session.tileSummary;
     session.tileSummary = TileSummary(
-      title: previous?.title ?? 'POLICE',
+      title: payFine ? 'POLICE · BRIBE PAID' : 'POLICE · JAILED',
       message: session.message,
       landedIndex: previous?.landedIndex ?? player.position,
       finalPosition: player.position,
       changes: List.unmodifiable(changes),
     );
     session.pendingPoliceFine = null;
-    session.phase = TurnPhase.specialReview;
+    session.pendingPoliceJail = null;
+    if (!payFine && from != destination) {
+      session.phase = TurnPhase.animating;
+      lastOutcome = TurnOutcome(
+        sequence: ++_sequence,
+        playerIndex: session.currentPlayerIndex,
+        dice: session.lastDice ?? 1,
+        path: [destination],
+        description: session.message,
+        landedType: TileType.jail,
+        effectLabel: 'POLICE · GO TO JAIL',
+      );
+    } else {
+      session.phase = TurnPhase.specialReview;
+    }
     notifyListeners();
   }
 

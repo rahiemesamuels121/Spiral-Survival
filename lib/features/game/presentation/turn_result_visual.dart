@@ -20,9 +20,14 @@ class TurnResultVisual extends StatelessWidget {
     if (summary == null) return const SizedBox.shrink();
     final source = board.tiles[summary.landedIndex];
     final destination = board.tiles[summary.finalPosition];
-    final arrested =
+    final policeEncounter =
         session.phase == TurnPhase.jailChoice ||
         summary.title.toUpperCase().contains('POLICE');
+    final arrested =
+        policeEncounter &&
+        !summary.title.toUpperCase().contains('BRIBE PAID') &&
+        session.pendingPoliceFine == null &&
+        destination.type == TileType.jail;
     final attack =
         summary.title.toUpperCase().contains('STABBER') ||
         summary.title.toUpperCase().contains('PEW PEW');
@@ -42,11 +47,13 @@ class TurnResultVisual extends StatelessWidget {
           TileType.star,
           TileType.shop,
         }.contains(source.type);
-    final from = arrested ? 'police' : BoardArtwork.symbolFor(source);
+    final from = policeEncounter ? 'police' : BoardArtwork.symbolFor(source);
     final to = died
         ? 'ghost'
         : arrested
         ? 'jail'
+        : policeEncounter
+        ? 'police'
         : attack || summary.finalPosition == 0
         ? 'startFlag'
         : inventory
@@ -58,6 +65,10 @@ class TurnResultVisual extends StatelessWidget {
         ? 'YOU DIED'
         : arrested
         ? 'JAIL'
+        : policeEncounter
+        ? session.pendingPoliceFine != null
+              ? 'POLICE STOP'
+              : 'STAY HERE'
         : attack || summary.finalPosition == 0
         ? 'START'
         : inventory
@@ -74,7 +85,7 @@ class TurnResultVisual extends StatelessWidget {
               Flexible(
                 child: _badge(
                   from,
-                  arrested ? 'POLICE' : source.typeLabel.toUpperCase(),
+                  policeEncounter ? 'POLICE' : source.typeLabel.toUpperCase(),
                   const Color(0xFF487884),
                 ),
               ),

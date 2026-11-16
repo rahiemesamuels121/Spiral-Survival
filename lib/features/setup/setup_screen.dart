@@ -6,6 +6,9 @@ import '../game/data/board_repository.dart';
 import '../game/domain/board_definition.dart';
 import '../game/domain/game_session.dart';
 import '../game/presentation/game_screen.dart';
+import '../game/presentation/player_avatar.dart';
+import '../game/domain/player_icon.dart';
+import '../multiplayer/presentation/online_room_screen.dart';
 
 class GameSetupScreen extends StatefulWidget {
   const GameSetupScreen({super.key});
@@ -18,6 +21,7 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _store = SessionStore();
   late final List<TextEditingController> _names;
+  final _icons = List.filled(5, PlayerIcon.number);
   int _count = 3; // Requested default: Player 1, Player 2, Player 3.
   GameSession? _saved;
   late final Future<BoardDefinition> _boardFuture;
@@ -91,6 +95,9 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
         colors: AppTheme.playerColors.map((c) => c.toARGB32()).toList(),
         board: board,
       );
+      for (var i = 0; i < _count; i++) {
+        controller.session.players[i].icon = _icons[i];
+      }
       await _store.clear();
       if (!mounted) return;
       await _openGame(controller.session);
@@ -188,13 +195,24 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                             for (var i = 0; i < _count; i++) ...[
                               Row(
                                 children: [
-                                  CircleAvatar(
-                                    backgroundColor: AppTheme.playerColors[i],
-                                    child: Text(
-                                      '${i + 1}',
-                                      style: const TextStyle(
-                                        color: AppTheme.navy,
-                                        fontWeight: FontWeight.bold,
+                                  Tooltip(
+                                    message: 'Change Player ${i + 1} icon',
+                                    child: InkWell(
+                                      onTap: () async {
+                                        final icon = await pickPlayerIcon(
+                                          context,
+                                          selected: _icons[i],
+                                          color: AppTheme.playerColors[i],
+                                          number: i + 1,
+                                        );
+                                        if (icon != null && mounted) {
+                                          setState(() => _icons[i] = icon);
+                                        }
+                                      },
+                                      child: PlayerAvatar(
+                                        icon: _icons[i],
+                                        color: AppTheme.playerColors[i],
+                                        number: i + 1,
                                       ),
                                     ),
                                   ),
@@ -236,6 +254,19 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                                 onPressed: _startGame,
                                 icon: const Icon(Icons.casino),
                                 label: const Text('START GAME'),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => const OnlineRoomScreen(),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.public_rounded),
+                                label: const Text('PLAY ONLINE'),
                               ),
                             ),
                             if (_saved != null) ...[

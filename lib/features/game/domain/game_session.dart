@@ -33,6 +33,7 @@ class GameSession {
     this.pendingCardId,
     this.tileSummary,
     this.pendingPoliceFine,
+    this.pendingPoliceJail,
     this.pendingHospital = false,
     this.pendingShopTile,
     this.pendingPortalTile,
@@ -57,6 +58,7 @@ class GameSession {
   String? pendingCardId;
   TileSummary? tileSummary;
   int? pendingPoliceFine;
+  int? pendingPoliceJail;
   bool pendingHospital;
   int? pendingShopTile;
   int? pendingPortalTile;
@@ -82,6 +84,7 @@ class GameSession {
     'pendingCardId': pendingCardId,
     'tileSummary': tileSummary?.toJson(),
     'pendingPoliceFine': pendingPoliceFine,
+    'pendingPoliceJail': pendingPoliceJail,
     'pendingHospital': pendingHospital,
     'pendingShopTile': pendingShopTile,
     'pendingPortalTile': pendingPortalTile,
@@ -155,6 +158,7 @@ class GameSession {
       );
     }
     final pendingFine = (json['pendingPoliceFine'] as num?)?.toInt();
+    final pendingJail = (json['pendingPoliceJail'] as num?)?.toInt();
     if (loadedPhase == TurnPhase.jailChoice &&
         (pendingFine == null || pendingFine <= 0)) {
       throw const FormatException('Saved police choice is missing its fine.');
@@ -162,6 +166,15 @@ class GameSession {
     final pendingShop = (json['pendingShopTile'] as num?)?.toInt();
     if (loadedPhase == TurnPhase.shopping && pendingShop == null) {
       throw const FormatException('Saved shop visit is missing its tile.');
+    }
+    // Older matches charged every hospital arrival. Preserve an outstanding
+    // treatment choice while ordinary legacy players remain healthy.
+    final currentPlayerJson =
+        (json['players'] as List<dynamic>)[current] as Map;
+    if (loadedPhase != TurnPhase.ready &&
+        (json['pendingHospital'] as bool? ?? false) &&
+        !currentPlayerJson.containsKey('isInjured')) {
+      players[current].isInjured = true;
     }
     final pendingPortal = (json['pendingPortalTile'] as num?)?.toInt();
     final portalDirections =
@@ -193,6 +206,7 @@ class GameSession {
           loadedPhase != TurnPhase.ready &&
           (json['pendingHospital'] as bool? ?? false),
       pendingPoliceFine: loadedPhase == TurnPhase.ready ? null : pendingFine,
+      pendingPoliceJail: loadedPhase == TurnPhase.ready ? null : pendingJail,
       pendingShopTile: loadedPhase == TurnPhase.ready ? null : pendingShop,
       pendingPortalTile: loadedPhase == TurnPhase.ready ? null : pendingPortal,
       portalCardDirections: loadedPhase == TurnPhase.ready

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="editor-token" content="__EDITOR_TOKEN__">
+  <title>Spiral Quest · Board Workshop</title>
+  <link rel="stylesheet" href="/editor.css"><script src="/editor.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brandmark" aria-hidden="true">◉</span><div><h1>Board Workshop</h1><p>SPIRAL QUEST <span> / </span> LOCAL EDITOR</p></div></div>
+  <nav aria-label="Board files"><button id="open">Open JSON</button><button id="download">Save a copy</button><button class="primary" id="save">Save to game</button></nav>
+  <input id="file" type="file" accept=".json,application/json" hidden>
+</header>
+<div class="notice"><span class="dot"></span><span id="status" role="status" aria-live="polite">Loading the current game board…</span><button class="textbutton" id="reload">Reload game board</button></div>
+<main>
+  <section class="workspace" aria-label="Board preview">
+    <div class="toolbar"><div class="selection-jump"><label for="jump">TILE</label><input id="jump" type="number" min="0" max="119" value="0" aria-label="Go to tile"><button id="go">Go</button></div>
+      <div class="history"><button id="undo" title="Undo (⌘/Ctrl+Z)" aria-label="Undo">↶</button><button id="redo" title="Redo (⌘/Ctrl+Shift+Z)" aria-label="Redo">↷</button></div>
+      <span class="spacer"></span><button id="zoomout" aria-label="Zoom out">−</button><button id="fit">Fit</button><button id="zoomin" aria-label="Zoom in">+</button>
+    </div>
+    <div class="canvas" id="canvas"><svg id="board" viewBox="0 0 1000 1000" role="img" aria-label="Interactive board. Click a tile to edit it."></svg><div class="canvas-loading" id="loading">Opening your board…</div></div>
+    <div class="board-footer"><label><input id="move" type="checkbox"> Move tiles</label><label><input id="snap" type="checkbox" checked> Snap to grid</label><label><input id="numbers" type="checkbox" checked> Tile numbers</label><label><input id="route" type="checkbox"> Route</label><span class="spacer"></span><button class="textbutton" id="restore-layout">Restore spiral layout</button></div>
+    <p class="hint">Click a tile to edit. Drag the empty board to pan. Scroll to zoom. Tile numbers set the playing order.</p>
+  </section>
+  <aside class="inspector" aria-label="Selected tile">
+    <div class="tile-heading"><div><p class="eyebrow">SELECTED SPACE</p><h2 id="tile-heading">Tile 0</h2></div><span id="type-pill" class="pill">START</span></div>
+    <div class="stepper"><button id="previous">← Previous</button><button id="next">Next →</button></div>
+    <form id="tile-form">
+      <label for="effect">Tile effect</label><select id="effect"></select>
+      <p id="effect-hint" class="fieldhint"></p>
+      <label for="label">Label</label><input id="label" type="text" maxlength="80" autocomplete="off">
+      <div id="amount-row"><label for="amount">Amount</label><input id="amount" required type="number" min="0" max="1000000" step="1"></div>
+      <div id="mine-color-row"><label for="mine-color">Mine color</label><select id="mine-color"><option value="red">Red · Death</option><option value="blue">Blue · Death or injury</option><option value="green">Green · Health pack or hospital</option></select></div>
+      <div id="destination-row"><label for="destination">Destination tile</label><select id="destination"></select></div>
+      <label id="antidote-row" class="checkrow"><input id="antidote" type="checkbox"> Use up one antidote</label>
+      <details><summary>Position &amp; illustration</summary><div class="pair"><div><label for="x">X position %</label><input id="x" required type="number" min="0" max="100" step="0.01"></div><div><label for="y">Y position %</label><input id="y" required type="number" min="0" max="100" step="0.01"></div></div>
+        <label for="artwork">Illustration</label><select id="artwork"></select>
+        <div class="color-row"><label class="checkrow"><input id="auto-fill" type="checkbox"> Automatic tile color</label><input id="fill" type="color" value="#F5EEDD" aria-label="Custom tile color"></div>
+        <div class="color-row"><label class="checkrow"><input id="auto-ink" type="checkbox"> Automatic text color</label><input id="ink" type="color" value="#203C43" aria-label="Custom text color"></div>
+      </details>
+      <button class="apply" id="apply" type="submit">Apply tile changes</button>
+    </form>
+    <section class="swap"><p class="eyebrow">SWAP CONTENTS</p><div class="swap-controls"><label for="swap-target" class="sr-only">Swap with tile</label><input id="swap-target" type="number" min="1" max="118" placeholder="Tile #"><button id="swap">Swap tiles</button></div><p class="fieldhint">Effects, labels and colors swap. Positions stay put.</p></section>
+    <section class="validation"><h3 id="validation-heading">Ready to save</h3><ul id="issues"></ul><p id="validation-note">Every change is checked against the game’s tile rules.</p></section>
+    <div class="save-note">Saving to the game updates the source board and creates a backup. Build the game later to use your changes. This helper never creates APKs.</div>
+  </aside>
+</main>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

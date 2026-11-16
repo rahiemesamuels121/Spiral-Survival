@@ -139,22 +139,28 @@ void main() {
   );
 
   test(
-    'Police sends to the closest jail and lets the player miss a turn instead of paying',
+    'Police waits for a bribe decision before sending a refusing player to the closest jail',
     () async {
       final game = await gameAt(15);
       final player = game.session.players.first;
       player.cash = 5;
       final action = game.roll()!;
-      expect(action.path, [16, 13]);
-      expect(player.position, 13);
+      expect(action.path, [16]);
+      expect(player.position, 16);
+      expect(game.session.pendingPoliceJail, 13);
       expect(player.cash, 5);
       expect(player.debt, 0);
       expect(player.skipTurns, 0);
       game.finishAnimation();
       expect(game.session.phase, TurnPhase.jailChoice);
       game.choosePolicePenalty(payFine: false);
+      expect(player.position, 13);
       expect(player.skipTurns, 1);
       expect(player.cash, 5);
+      expect(game.session.pendingPoliceJail, isNull);
+      expect(game.session.phase, TurnPhase.animating);
+      game.finishAnimation();
+      expect(game.session.phase, TurnPhase.specialReview);
       game.dismissTileSummary();
       game.acknowledgeHandoff();
       game.roll();
@@ -314,11 +320,36 @@ void main() {
   });
 
   test(
-    'All five portals use mystery cards instead of fixed destinations',
+    'The final snake is followed by a safe tile and only four lions remain',
+    () async {
+      final board = await load();
+      final snakes = board.tiles.where((tile) => tile.type == TileType.snake);
+      expect(snakes.last.index, 99);
+      expect(board.tiles[100].type, TileType.normal);
+      expect(board.tiles[107].type, TileType.normal);
+      expect(
+        board.tiles
+            .where((tile) => tile.type == TileType.lion)
+            .map((tile) => tile.index),
+        [103, 104, 105, 106],
+      );
+      expect(
+        board.tiles
+            .where((tile) => tile.type == TileType.mine)
+            .map((tile) => tile.index),
+        [85, 98, 109],
+      );
+      expect(board.tiles[78].type, TileType.rawMeat);
+      expect(board.tiles[78].amount, 3);
+    },
+  );
+
+  test(
+    'All four portals use mystery cards instead of fixed destinations',
     () async {
       final board = await load();
       final portals = board.tiles.where((tile) => tile.type == TileType.portal);
-      expect(portals.map((tile) => tile.index), [25, 55, 87, 108, 117]);
+      expect(portals.map((tile) => tile.index), [25, 55, 108, 117]);
       for (final portal in portals) {
         expect(portal.destination, isNull);
       }

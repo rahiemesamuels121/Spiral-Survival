@@ -274,13 +274,17 @@
       "index": 22,
       "x": 0.562,
       "y": 0.934,
-      "type": "cash",
-      "label": "$10",
-      "amount": 10,
+      "type": "star",
+      "label": "STAR",
+      "amount": 1,
       "destination": null,
       "segment": "spiral-leg-1",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "consumesAntidote": false,
+      "artwork": null,
+      "fillColor": null,
+      "textColor": null
     },
     {
       "index": 23,
@@ -721,13 +725,17 @@
       "index": 59,
       "x": 0.19,
       "y": 0.376,
-      "type": "normal",
-      "label": "",
-      "amount": 0,
+      "type": "cash",
+      "label": "CASH",
+      "amount": 20,
       "destination": null,
       "segment": "spiral-leg-4",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "consumesAntidote": false,
+      "artwork": null,
+      "fillColor": null,
+      "textColor": null
     },
     {
       "index": 60,
@@ -951,7 +959,7 @@
       "y": 0.686,
       "type": "rawMeat",
       "label": "RAW MEAT",
-      "amount": 1,
+      "amount": 3,
       "destination": null,
       "segment": "spiral-leg-6",
       "width": 0.05,
@@ -1033,13 +1041,14 @@
       "index": 85,
       "x": 0.81,
       "y": 0.252,
-      "type": "normal",
-      "label": "",
+      "type": "mine",
+      "label": "MINE",
       "amount": 0,
-      "destination": null,
+      "destination": 62,
       "segment": "spiral-leg-6",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "mineColor": "green"
     },
     {
       "index": 86,
@@ -1057,15 +1066,15 @@
       "index": 87,
       "x": 0.748,
       "y": 0.19,
-      "type": "portal",
-      "label": "5 IN 1 TELEPORT",
+      "type": "snake",
+      "label": "SNAKE",
       "amount": 0,
-      "destination": null,
+      "destination": 10,
       "segment": "spiral-leg-7",
       "width": 0.05,
       "height": 0.05,
       "artwork": null,
-      "consumesAntidote": null
+      "consumesAntidote": true
     },
     {
       "index": 88,
@@ -1083,13 +1092,15 @@
       "index": 89,
       "x": 0.624,
       "y": 0.19,
-      "type": "jail",
-      "label": "JAIL",
+      "type": "star",
+      "label": "STAR",
       "amount": 1,
       "destination": null,
       "segment": "spiral-leg-7",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "artwork": null,
+      "consumesAntidote": false
     },
     {
       "index": 90,
@@ -1194,50 +1205,58 @@
       "type": "mine",
       "label": "MINE",
       "amount": 0,
-      "destination": null,
+      "destination": 62,
       "segment": "spiral-leg-8",
       "width": 0.05,
       "height": 0.05,
-      "artwork": null
+      "artwork": null,
+      "mineColor": "blue"
     },
     {
       "index": 99,
       "x": 0.314,
       "y": 0.5,
-      "type": "mine",
-      "label": "MINE",
+      "type": "snake",
+      "label": "SNAKE",
       "amount": 0,
-      "destination": null,
+      "destination": 10,
       "segment": "spiral-leg-8",
       "width": 0.05,
       "height": 0.05,
-      "artwork": null
+      "artwork": null,
+      "consumesAntidote": true,
+      "fillColor": null,
+      "textColor": null
     },
     {
       "index": 100,
       "x": 0.314,
       "y": 0.562,
-      "type": "mine",
-      "label": "MINE",
+      "type": "normal",
+      "label": "",
       "amount": 0,
       "destination": null,
       "segment": "spiral-leg-8",
       "width": 0.05,
       "height": 0.05,
-      "artwork": null
+      "artwork": null,
+      "consumesAntidote": false
     },
     {
       "index": 101,
       "x": 0.314,
       "y": 0.624,
-      "type": "mine",
-      "label": "MINE",
-      "amount": 0,
+      "type": "star",
+      "label": "STAR",
+      "amount": 1,
       "destination": null,
       "segment": "spiral-leg-8",
       "width": 0.05,
       "height": 0.05,
-      "artwork": null
+      "artwork": null,
+      "consumesAntidote": false,
+      "fillColor": null,
+      "textColor": null
     },
     {
       "index": 102,
@@ -1305,13 +1324,15 @@
       "index": 107,
       "x": 0.624,
       "y": 0.686,
-      "type": "lion",
-      "label": "LION",
+      "type": "normal",
+      "label": "",
       "amount": 0,
-      "destination": 62,
+      "destination": null,
       "segment": "spiral-leg-9",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "consumesAntidote": false,
+      "artwork": null
     },
     {
       "index": 108,
@@ -1335,14 +1356,15 @@
       "destination": null,
       "segment": "spiral-leg-10",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "mineColor": "red"
     },
     {
       "index": 110,
       "x": 0.686,
       "y": 0.562,
-      "type": "mine",
-      "label": "MINE",
+      "type": "normal",
+      "label": "",
       "amount": 0,
       "destination": null,
       "segment": "spiral-leg-10",
@@ -1364,15 +1386,19 @@
     },
     {
       "index": 112,
-      "x": 0.686,
-      "y": 0.438,
-      "type": "police",
-      "label": "POLICE",
-      "amount": 20,
-      "destination": null,
+      "x": 0.6859999999999999,
+      "y": 0.43799999999999994,
+      "type": "trapDoor",
+      "label": "TRAP DOOR",
+      "amount": 0,
+      "destination": 62,
       "segment": "spiral-leg-10",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "consumesAntidote": false,
+      "artwork": null,
+      "fillColor": null,
+      "textColor": null
     },
     {
       "index": 113,
@@ -1461,5 +1487,6 @@
       "height": 0.05
     }
   ],
-  "layoutRevision": 1
+  "layoutRevision": 1,
+  "onlineBoardId": "spiral-quest-board-21f8f5fe0c18"
 }

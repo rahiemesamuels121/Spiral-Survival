@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {"collectionGroup": "rooms", "fieldPath": "state", "indexes": []},
+    {"collectionGroup": "rooms", "fieldPath": "outcome", "indexes": []},
+    {"collectionGroup": "rooms", "fieldPath": "members", "indexes": []}
+  ]
+}

@@ -48,15 +48,24 @@ void main() {
         });
         await tester.pump();
         expect(find.text('POLICE · CHOOSE YOUR PENALTY'), findsOneWidget);
-        expect(find.text('JAIL'), findsWidgets);
-        final pay = find.widgetWithText(FilledButton, r'PAY $20');
+        expect(controller.session.currentPlayer.position, 16);
+        expect(find.text('JAIL'), findsNothing);
+        expect(find.text('POLICE STOP'), findsOneWidget);
+        final pay = find.widgetWithText(FilledButton, r'BRIBE $20');
         expect(tester.widget<FilledButton>(pay).onPressed != null, payFine);
-        expect(find.text('MISS ONE TURN'), findsOneWidget);
-        await tester.tap(payFine ? pay : find.text('MISS ONE TURN'));
+        expect(find.text('GO TO JAIL'), findsOneWidget);
+        await tester.tap(payFine ? pay : find.text('GO TO JAIL'));
         await tester.pump();
+        if (!payFine) {
+          for (var i = 0; i < 30; i++) {
+            await tester.pump(const Duration(milliseconds: 100));
+          }
+        }
         expect(controller.session.phase, TurnPhase.specialReview);
+        expect(controller.session.currentPlayer.position, payFine ? 16 : 13);
         expect(controller.session.players.first.cash, payFine ? 80 : 5);
         expect(controller.session.players.first.skipTurns, payFine ? 0 : 1);
+        expect(find.text(payFine ? 'STAY HERE' : 'JAIL'), findsOneWidget);
         await tester.tap(find.text('CONTINUE'));
         await tester.pump();
         expect(find.text('PASS THE DEVICE'), findsOneWidget);

@@ -211,7 +211,7 @@ void main() {
     expect(restored.session.currentPlayer.position, 8);
   });
   test(
-    'A risky portal arrival still triggers police and animates through both destinations',
+    'A risky portal arrival stays at the encounter until the bribe is refused',
     () {
       final game = _game(_board(police: 11, jail: 9), 5);
       game.session.currentPlayer.inventory.stabbers = 1;
@@ -219,11 +219,19 @@ void main() {
       game.finishAnimation();
       expect(game.session.phase, TurnPhase.portalChoice);
       _choose(game, 1);
-      expect(game.lastOutcome!.path, [10, 9]);
+      expect(game.lastOutcome!.path, [10]);
       expect(game.session.currentPlayer.inventory.hasWeapons, isFalse);
-      expect(game.session.currentPlayer.position, 9);
+      expect(game.session.currentPlayer.position, 10);
+      expect(game.session.pendingPoliceJail, 9);
       game.finishAnimation();
       expect(game.session.phase, TurnPhase.jailChoice);
+      game.choosePolicePenalty(payFine: false);
+      expect(game.session.currentPlayer.position, 9);
+      expect(game.session.currentPlayer.skipTurns, 1);
+      expect(game.session.pendingPoliceJail, isNull);
+      expect(game.session.phase, TurnPhase.animating);
+      game.finishAnimation();
+      expect(game.session.phase, TurnPhase.specialReview);
     },
   );
   test('Invalid card indices and malformed saves cannot bypass the choice', () {

@@ -80,8 +80,9 @@ void main() {
         from: entry.$1 - 1,
       );
       final outcome = game.roll()!;
-      expect(outcome.path, [entry.$1, entry.$3]);
-      expect(game.session.players.first.position, entry.$3);
+      expect(outcome.path, [entry.$1]);
+      expect(game.session.players.first.position, entry.$1);
+      expect(game.session.pendingPoliceJail, entry.$3);
       expect(game.session.players.first.cash, 100);
       expect(game.session.players.first.skipTurns, 0);
       game.finishAnimation();
@@ -106,8 +107,9 @@ void main() {
     game.choosePolicePenalty(payFine: true);
     game.choosePolicePenalty(payFine: true);
     final player = game.session.players.first;
-    expect(player.position, 1);
+    expect(player.position, 2);
     expect(player.cash, 0);
+    expect(game.session.pendingPoliceJail, isNull);
     expect(player.debt, 0);
     expect(player.skipTurns, 0);
     expect(game.session.pendingPoliceFine, isNull);
@@ -130,6 +132,10 @@ void main() {
     expect(player.debt, 7);
     game.choosePolicePenalty(payFine: false);
     game.choosePolicePenalty(payFine: false);
+    expect(player.position, 1);
+    expect(game.session.phase, TurnPhase.animating);
+    expect(game.lastOutcome!.path, [1]);
+    game.finishAnimation();
     expect(player.cash, 5);
     expect(player.debt, 7);
     expect(
@@ -157,6 +163,8 @@ void main() {
       addTearDown(restored.dispose);
       expect(restored.session.phase, TurnPhase.jailChoice);
       expect(restored.session.pendingPoliceFine, 20);
+      expect(restored.session.pendingPoliceJail, 1);
+      expect(restored.session.players.first.position, 2);
       expect(restored.beginDiceRoll(), isNull);
       restored.choosePolicePenalty(payFine: true);
       final again = GameController(
@@ -167,6 +175,8 @@ void main() {
       expect(again.session.phase, TurnPhase.specialReview);
       again.choosePolicePenalty(payFine: true);
       expect(again.session.players.first.cash, 80);
+      expect(again.session.players.first.position, 2);
+      expect(again.session.pendingPoliceJail, isNull);
       expect(again.session.players.first.skipTurns, 0);
       again.dismissTileSummary();
       expect(again.session.phase, TurnPhase.handoff);
@@ -282,7 +292,7 @@ void main() {
         ]);
         final game = createGame(board, from: 3, deck: ['backward_2']);
         final outcome = game.roll()!;
-        expect(outcome.path, police ? [4, 2, 1] : [4, 2, 0]);
+        expect(outcome.path, police ? [4, 2] : [4, 2, 0]);
         game.finishAnimation();
         expect(game.session.phase, TurnPhase.eventReveal);
         if (police) {
@@ -295,6 +305,7 @@ void main() {
           expect(restored.session.phase, TurnPhase.jailChoice);
           restored.choosePolicePenalty(payFine: true);
           expect(restored.session.players.first.cash, 80);
+          expect(restored.session.players.first.position, 2);
         } else {
           expect(game.session.players.first.position, 0);
           game.dismissEventCard();
