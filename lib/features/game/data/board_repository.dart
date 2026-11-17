@@ -20,6 +20,7 @@ class BoardRepository {
 
   static const _revisions = {
     'hospitalRulesRevision': 1,
+    'secretSocietyRevision': 1,
     'confusionRulesRevision': 1,
     'lionRulesRevision': 1,
     'lateTrapsRevision': 1,
@@ -344,6 +345,25 @@ class BoardRepository {
         }
         changed = true;
       }
+      if (data['secretSocietyRevision'] != 1 && board.tiles.length == 120) {
+        final tiles = board.tiles.toList();
+        // Preserve custom effects; only replace the former empty space.
+        if (tiles[60].type == TileType.normal && tiles[60].label.isEmpty) {
+          tiles[60] = tiles[60].withChanges({
+            'type': 'secretSociety',
+            'label': 'SECRET SOCIETY',
+            'amount': 0,
+            'destination': null,
+            'artwork': null,
+          });
+          board = BoardDefinition(tiles, id: board.id);
+        }
+        const backupKey = 'spiral_custom_board_before_secret_society';
+        if (await preferences.getString(backupKey) == null) {
+          await preferences.setString(backupKey, saved);
+        }
+        changed = true;
+      }
       if (changed) {
         await preferences.setString(customBoardKey, _encodeBoard(board));
       }
@@ -378,7 +398,7 @@ class BoardRepository {
     }
     return BoardDefinition(
       reference.tiles,
-      id: revision as String? ?? 'spiral-quest-board-v4',
+      id: '${revision as String? ?? 'spiral-quest-board-v4'}-characters-v3',
     );
   }
 

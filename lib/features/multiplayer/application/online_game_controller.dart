@@ -12,7 +12,7 @@ import '../data/room_service.dart';
 /// UI adapter: sends intentions and applies only host-committed snapshots.
 class OnlineGameController extends GameController {
   OnlineGameController({required this.connection})
-    : super(session: connection.room!.session!, board: connection.board) {
+    : super(session: connection.visibleSession!, board: connection.board) {
     _revision = connection.room!.revision;
     connection.addListener(_receive);
   }
@@ -41,6 +41,7 @@ class OnlineGameController extends GameController {
 
   bool get canAct =>
       !_pending &&
+      connection.privateViewReady &&
       _localResults.isEmpty &&
       connection.connected &&
       connection.room?.status == 'playing' &&
@@ -60,6 +61,7 @@ class OnlineGameController extends GameController {
       return 'Waiting for the host to reconnect…';
     }
     if (actionError != null) return actionError!;
+    if (!connection.privateViewReady) return 'Syncing your private details…';
     if (_pending) return 'Sending action…';
     return connection.room!.activeUid == connection.uid
         ? 'Your turn'
@@ -69,15 +71,20 @@ class OnlineGameController extends GameController {
   void _receive() {
     final room = connection.room;
     if (room == null || _disposed) return;
+    if (!connection.privateViewReady) {
+      notifyListeners();
+      return;
+    }
     if (room.revision > _revision && room.state.isNotEmpty) {
       final previous = session;
-      final next = room.session!;
+      final next = connection.visibleSession!;
       _revision = room.revision;
       TurnOutcome? movement;
       var hasResults = false;
       var hasRecordedMove = false;
-      if (room.outcome.isNotEmpty) {
-        final action = jsonDecode(room.outcome) as Map<String, dynamic>;
+      if (connection.visibleOutcome.isNotEmpty) {
+        final action =
+            jsonDecode(connection.visibleOutcome) as Map<String, dynamic>;
         for (final result in action['results'] as List<dynamic>? ?? const []) {
           hasResults = true;
           _localResults.add(
@@ -115,12 +122,14 @@ class OnlineGameController extends GameController {
           }
         }
       }
-      // Every move is reviewable on each device, including ordinary spaces
-      // and arrivals where the active player still has a decision to make.
+      // Keep special-tile decisions reviewable; ordinary movement needs no popup.
       if (!hasResults &&
           hasRecordedMove &&
           movement != null &&
-          movement.path.isNotEmpty) {
+          movement.path.isNotEmpty &&
+          movement.landedType != TileType.normal &&
+          movement.landedType != TileType.start &&
+          movement.landedType != TileType.finish) {
         final review = GameSession.fromJson(next.toJson());
         review.currentPlayerIndex = movement.playerIndex;
         review.phase = TurnPhase.specialReview;
@@ -155,12 +164,36 @@ class OnlineGameController extends GameController {
         }
       }
       actionError = null;
+    } else if (connection.privateViewReady && room.revision == _revision) {
+      final next = connection.visibleSession;
+      if (next != null) {
+        session.hitmanOwnerId = next.hitmanOwnerId;
+        session.hitmanTile = next.hitmanTile;
+        if (session.currentPlayer.id == localPlayerId) {
+          session.tileSummary = next.tileSummary;
+        }
+        for (var i = 0; i < session.players.length; i++) {
+          if (session.players[i].id == localPlayerId) {
+            session.players[i].cash = next.players[i].cash;
+            session.players[i].debt = next.players[i].debt;
+            final own = session.players[i].inventory;
+            final updated = next.players[i].inventory;
+            own.boats = updated.boats;
+            own.antidotes = updated.antidotes;
+            own.rawMeat = updated.rawMeat;
+            own.healthPacks = updated.healthPacks;
+            own.stabbers = updated.stabbers;
+            own.pewPews = updated.pewPews;
+            own.stars = updated.stars;
+          }
+        }
+      }
     }
     notifyListeners();
   }
 
   void _send(String action, [Map<String, dynamic> args = const {}]) {
-    if (action == 'playerIcon' ? !canChangePlayerIcon : !canAct) return;
+    if (!canAct) return;
     _pending = true;
     actionError = null;
     notifyListeners();
@@ -181,17 +214,9 @@ class OnlineGameController extends GameController {
   }
 
   @override
-  bool get canChangePlayerIcon =>
-      !_pending &&
-      connection.connected &&
-      connection.room?.status == 'playing' &&
-      connection.room!.hostAvailable &&
-      !connection.room!.expired &&
-      localPlayerId != null;
-
+  bool get canChangePlayerIcon => false;
   @override
-  void changePlayerIcon(PlayerIcon icon) =>
-      _send('playerIcon', {'icon': icon.name});
+  void changePlayerIcon(PlayerIcon icon) {}
 
   @override
   int? beginDiceRoll() {
@@ -201,7 +226,7 @@ class OnlineGameController extends GameController {
   }
 
   @override
-  TurnOutcome? resolveDiceRoll({bool offerSameTileChoice = true}) => null;
+  TurnOutcome? resolveDiceRoll({bool offerAttackChoice = true}) => null;
   @override
   TurnOutcome? roll() {
     beginDiceRoll();
@@ -262,6 +287,25 @@ class OnlineGameController extends GameController {
   bool buyWeapon(WeaponType type) {
     if (!canAct) return false;
     _send('buy', {'weapon': type.name});
+    return true;
+  }
+
+  @override
+  bool get canHireHitman => canAct && super.canHireHitman;
+  @override
+  List<int> get hitmanTargets => canAct ? super.hitmanTargets : const [];
+
+  @override
+  bool hireHitman(int tileIndex) {
+    if (!canAct || !canHireHitman) return false;
+    _send('hitmanHire', {'tile': tileIndex});
+    return true;
+  }
+
+  @override
+  bool useHitman(int targetIndex) {
+    if (!canAct || !hitmanTargets.contains(targetIndex)) return false;
+    _send('hitmanAttack', {'target': targetIndex});
     return true;
   }
 

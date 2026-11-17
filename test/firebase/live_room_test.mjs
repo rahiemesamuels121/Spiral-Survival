@@ -11,7 +11,7 @@ const code='TEST'+Array.from({length:4},()=>alphabet[Math.floor(Math.random()*al
 const room=p=>doc(p.db,'rooms',code);
 let created=false;let passed=0;
 const check=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
-async function join(p){for(let retry=0;retry<5;retry++){try{return await runTransaction(p.db,async tx=>{const ref=room(p);const snapshot=await tx.get(ref);const data=snapshot.data();tx.update(ref,{members:{...data.members,[p.uid]:p.name},playerOrder:[...data.playerOrder,p.uid]});});}catch(e){if(e.code!=='permission-denied'||retry===4)throw e;await new Promise(resolve=>setTimeout(resolve,80*(retry+1)));}}}
+async function join(p){for(let retry=0;retry<5;retry++){try{return await runTransaction(p.db,async tx=>{const ref=room(p);const snapshot=await tx.get(ref);const data=snapshot.data();tx.update(ref,{members:{...data.members,[p.uid]:p.name},avatars:{...data.avatars,[p.uid]:'paw'},playerOrder:[...data.playerOrder,p.uid]});});}catch(e){if(e.code!=='permission-denied'||retry===4)throw e;await new Promise(resolve=>setTimeout(resolve,80*(retry+1)));}}}
 try{
  for(let i=0;i<6;i++){
   const app=initializeApp(options,'live-room-qa-'+i+'-'+Date.now());
@@ -22,7 +22,7 @@ try{
  const host=players[0];
  await check('anonymous authentication succeeds for six isolated clients',async()=>assert.equal(new Set(players.map(p=>p.uid)).size,6));
  await check('host creates a private waiting room',async()=>{
-  await setDoc(room(host),{hostId:host.uid,members:{[host.uid]:host.name},playerOrder:[host.uid],status:'waiting',revision:0,
+  await setDoc(room(host),{hostId:host.uid,members:{[host.uid]:host.name},avatars:{[host.uid]:'paw'},playerOrder:[host.uid],status:'waiting',revision:0,
    boardId:'spiral-quest-board-v4',state:'',outcome:'',activeUid:'',lastRequestId:'',lastError:'',hostSeen:serverTimestamp(),createdAt:serverTimestamp(),expiresAt:Timestamp.fromMillis(Date.now()+3600000)});
   created=true;
  });

@@ -8,15 +8,23 @@ leave without a purchase. Purchases use available cash and never create debt.
 | Stabber | $40 | Within 5 spaces, forward or backward | Roll a 6 for range; 4–6 on the same tile |
 | Pew pew | $95 | Within 10 spaces, forward or backward | Roll a 6 for range; 4–6 on the same tile |
 
-Before moving, a roll of 4, 5 or 6 offers a choice when carrying a weapon and
-sharing a tile: move using the roll, or attack one player on that tile instead.
-Attacking consumes the move and one weapon. The attacker stays in place.
-After movement and landing decisions, a 6 still allows the existing ranged attack. Distance is measured
-between current route indices after movement. The player can select one weapon
-and one target or end the turn. Both range limits include their boundary.
-The attack screen shows available weapons with owned counts, ranges, and target
-buttons. On smaller screens, scroll to reach additional targets or the move/end
-turn button.
+After a roll of 4 or 5, a carried weapon can attack an opponent on the same
+space instead of moving. On a 6, a carried weapon can attack an opponent within
+its range from the attacker's current space, including the same space.
+Secret Agents add 3 to weapon range (Stabber 8, Pew pew 13).
+
+Every qualifying choice occurs **before movement**: use the roll either to
+attack or to move. Attacking consumes one weapon and the movement for that turn;
+the attacker stays in place. Choosing movement blocks all further attacks with
+that roll, including attacks using weapons purchased after landing. There is no
+after-movement attack opportunity. Targets are checked using route indices
+before movement, with inclusive range limits. On small screens, scroll to reach
+additional targets or the move button.
+
+Hitman kills also end the hirer's turn without movement. A hitman can be used
+before rolling; a contract purchased after moving to Secret Society must wait
+until a later turn. The existing 20-space hitman range, anonymous contract and
+no-reward rules remain in effect.
 
 Using a weapon consumes one copy of that weapon, moves the target's token back
 to START, and shows an outcome summary. It does not clear the target's cash,

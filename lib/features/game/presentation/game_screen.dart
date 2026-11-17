@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import '../../../app/theme.dart';
+import '../../../app/platform/game_screen_awake.dart';
 import '../application/game_controller.dart';
+import '../application/computer_opponent.dart';
+import '../../help/help_screen.dart';
 import '../data/session_store.dart';
 import '../domain/event_card.dart';
 import '../domain/game_session.dart';
@@ -17,6 +20,7 @@ import '../flame/spiral_board_game.dart';
 import 'turn_result_visual.dart';
 import 'player_avatar.dart';
 import 'weapon_action_overlay.dart';
+import 'hitman_contract_panel.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({
@@ -42,6 +46,9 @@ class _GameScreenState extends State<GameScreen>
   final _store = SessionStore();
   Future<void> _saveTail = Future<void>.value();
   String? _lastQueuedSave;
+  ComputerTurnDriver? _computerDriver;
+  Timer? _stockTicker;
+  bool _helpOpen = false;
   bool _showDiceResult = false;
   double _gestureScale = 1;
 
@@ -50,7 +57,8 @@ class _GameScreenState extends State<GameScreen>
 
   String? get _viewerId => widget.online
       ? widget.controller.localPlayerId
-      : widget.controller.session.currentPlayer.id;
+      : widget.controller.localPlayerId ??
+            widget.controller.session.currentPlayer.id;
 
   bool _canSeePrivateDetails(PlayerState player) => player.id == _viewerId;
 
@@ -59,6 +67,7 @@ class _GameScreenState extends State<GameScreen>
     final session = widget.controller.session;
     switch (session.phase) {
       case TurnPhase.ready:
+      case TurnPhase.secretSocietyAccess:
       case TurnPhase.rolling:
       case TurnPhase.animating:
       case TurnPhase.portalTravel:
@@ -68,13 +77,15 @@ class _GameScreenState extends State<GameScreen>
       case TurnPhase.completed:
         return true;
       default:
-        return !widget.online || _canSeePrivateDetails(session.currentPlayer);
+        return !(widget.online || session.isComputerGame) ||
+            _canSeePrivateDetails(session.currentPlayer);
     }
   }
 
   @override
   void initState() {
     super.initState();
+    unawaited(GameScreenAwake.setEnabled(true));
     _boardGame = SpiralBoardGame(controller: widget.controller);
     _diceAnimation = AnimationController(
       vsync: this,
@@ -83,14 +94,22 @@ class _GameScreenState extends State<GameScreen>
     widget.controller.addListener(_persistStablePhase);
     _queueSave(); // Allow resume before the first roll.
     _syncRendering();
+    if (widget.controller.session.isComputerGame) {
+      _computerDriver = ComputerTurnDriver(
+        game: widget.controller,
+        rollDice: () => unawaited(_rollDice()),
+      );
+    }
     unawaited(
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
     );
-    unawaited(
-      SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]),
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _boardGame.setAmbientMotionEnabled(
+      !MediaQuery.disableAnimationsOf(context),
     );
   }
 
@@ -111,11 +130,19 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _syncRendering() {
-    final boardVisible = !_hasVisibleOverlay;
-    if (boardVisible) {
-      _boardGame.resumeEngine();
+    final boardVisible = !_hasVisibleOverlay && !_helpOpen;
+    _boardGame.setSceneVisible(boardVisible);
+    final showStock =
+        !_helpOpen &&
+        widget.controller.session.phase == TurnPhase.shopping &&
+        widget.controller.isHospitalShopping;
+    if (showStock) {
+      _stockTicker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
     } else {
-      _boardGame.pauseEngine();
+      _stockTicker?.cancel();
+      _stockTicker = null;
     }
   }
 
@@ -123,6 +150,7 @@ class _GameScreenState extends State<GameScreen>
     _syncRendering();
     final phase = widget.controller.session.phase;
     if (phase == TurnPhase.ready ||
+        phase == TurnPhase.secretSocietyAccess ||
         phase == TurnPhase.handoff ||
         phase == TurnPhase.specialReview ||
         phase == TurnPhase.jailChoice ||
@@ -166,10 +194,12 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   void dispose() {
+    unawaited(GameScreenAwake.setEnabled(false));
     widget.controller.removeListener(_persistStablePhase);
+    _computerDriver?.dispose();
+    _stockTicker?.cancel();
     _diceAnimation.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     super.dispose();
   }
 
@@ -206,7 +236,7 @@ class _GameScreenState extends State<GameScreen>
             },
             child: GestureDetector(
               onLongPressStart: (details) {
-                if (widget.controller.session.phase != TurnPhase.ready) return;
+                if (!widget.controller.session.isBoardInteractive) return;
                 final tile = _boardGame.tileAtScreen(details.localPosition);
                 if (tile != null) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -250,20 +280,27 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Future<void> _changePlayerIcon() async {
+  void _showCharacter() {
     final game = widget.controller;
-    final index = widget.online
-        ? game.session.players.indexWhere((p) => p.id == game.localPlayerId)
-        : game.session.currentPlayerIndex;
-    if (index < 0 || !game.canChangePlayerIcon) return;
-    final player = game.session.players[index];
-    final icon = await pickPlayerIcon(
-      context,
-      selected: player.icon,
-      color: Color(player.colorValue),
-      number: index + 1,
+    final player = game.session.players.firstWhere(
+      (p) => p.id == _viewerId,
+      orElse: () => game.session.currentPlayer,
     );
-    if (mounted && icon != null) game.changePlayerIcon(icon);
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(player.icon.label),
+        content: Text(
+          '${player.icon.ability}\n\nCharacters are locked when the game starts.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildHud() {
@@ -272,38 +309,12 @@ class _GameScreenState extends State<GameScreen>
       builder: (context, _) {
         final session = widget.controller.session;
         final player = session.currentPlayer;
+        final compact = MediaQuery.sizeOf(context).width < 600;
         final moving =
             session.phase == TurnPhase.animating ||
             session.phase == TurnPhase.portalTravel;
         return Stack(
           children: [
-            if (session.phase == TurnPhase.ready)
-              Positioned(
-                right: 12,
-                top: 80,
-                child: _hudCard(
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Zoom in',
-                        icon: const Icon(Icons.add),
-                        onPressed: () => _boardGame.zoomBoard(1.3),
-                      ),
-                      IconButton(
-                        tooltip: 'Zoom out',
-                        icon: const Icon(Icons.remove),
-                        onPressed: () => _boardGame.zoomBoard(1 / 1.3),
-                      ),
-                      IconButton(
-                        tooltip: 'Fit board to width',
-                        icon: const Icon(Icons.fit_screen),
-                        onPressed: _boardGame.fitBoardWidth,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             if (_showDiceResult)
               Center(
                 child: _hudCard(
@@ -340,10 +351,13 @@ class _GameScreenState extends State<GameScreen>
               top: 8,
               left: 8,
               right: 8,
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Flexible(
-                    child: _hudCard(
+                  _buildToolbar(
+                    compact: compact,
+                    player: _hudCard(
                       Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -371,10 +385,14 @@ class _GameScreenState extends State<GameScreen>
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  if (widget.online)
+                                  if (widget.online || session.isComputerGame)
                                     Text(
-                                      widget.onlineStatus?.call() ??
-                                          'Online room',
+                                      session.isComputerGame
+                                          ? (session.isComputerTurn
+                                                ? 'Computer is taking its turn…'
+                                                : 'Your turn')
+                                          : widget.onlineStatus?.call() ??
+                                                'Online room',
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -389,51 +407,104 @@ class _GameScreenState extends State<GameScreen>
                         ),
                       ),
                     ),
+                    actions: [
+                      _hudCard(
+                        IconButton(
+                          tooltip: 'Focus current player',
+                          onPressed: session.isBoardInteractive
+                              ? _boardGame.focusCurrentPlayer
+                              : null,
+                          icon: const Icon(Icons.center_focus_strong),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _hudCard(
+                        IconButton(
+                          tooltip: 'Character abilities',
+                          onPressed: _showCharacter,
+                          icon: const Icon(Icons.badge_outlined),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _hudCard(
+                        IconButton(
+                          tooltip: 'Players and inventory',
+                          onPressed: !moving && !_hasVisibleOverlay
+                              ? _showGameDetails
+                              : null,
+                          icon: const Icon(Icons.inventory_2_outlined),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _hudCard(
+                        IconButton(
+                          tooltip: 'Exit game',
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  _hudCard(
-                    IconButton(
-                      tooltip: 'Focus current player',
-                      onPressed: session.phase == TurnPhase.ready
-                          ? _boardGame.focusCurrentPlayer
-                          : null,
-                      icon: const Icon(Icons.center_focus_strong),
+                  if (session.isBoardInteractive) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _hudCard(
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: 'Zoom in',
+                              icon: const Icon(Icons.add),
+                              onPressed: () => _boardGame.zoomBoard(1.3),
+                            ),
+                            IconButton(
+                              tooltip: 'Zoom out',
+                              icon: const Icon(Icons.remove),
+                              onPressed: () => _boardGame.zoomBoard(1 / 1.3),
+                            ),
+                            IconButton(
+                              tooltip: 'Fit board to width',
+                              icon: const Icon(Icons.fit_screen),
+                              onPressed: _boardGame.fitBoardWidth,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  _hudCard(
-                    IconButton(
-                      tooltip: 'Change player icon',
-                      onPressed:
-                          !moving &&
-                              !_hasVisibleOverlay &&
-                              widget.controller.canChangePlayerIcon
-                          ? _changePlayerIcon
-                          : null,
-                      icon: const Icon(Icons.face),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _hudCard(
-                    IconButton(
-                      tooltip: 'Players and inventory',
-                      onPressed: !moving && !_hasVisibleOverlay
-                          ? _showGameDetails
-                          : null,
-                      icon: const Icon(Icons.inventory_2_outlined),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _hudCard(
-                    IconButton(
-                      tooltip: 'Exit game',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),
+            if (session.isBoardInteractive &&
+                _canSeePrivateDetails(session.currentPlayer) &&
+                (session.hitmanOwnerId == _viewerId ||
+                    widget.controller.canAccessSecretSociety))
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 110,
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Tooltip(
+                    message: session.hitmanOwnerId == _viewerId
+                        ? 'Hitman contract'
+                        : 'Secret Society',
+                    child: FilledButton.icon(
+                      key: const ValueKey('secret-society-access'),
+                      onPressed: (widget.canInteract?.call() ?? true)
+                          ? _showHitmanContract
+                          : null,
+                      icon: const Icon(Icons.visibility_off_outlined),
+                      label: Text(
+                        session.hitmanOwnerId == _viewerId
+                            ? 'HITMAN CONTRACT'
+                            : 'SECRET SOCIETY · \$${widget.controller.hitmanHirePrice}',
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (!moving)
               Positioned(
                 bottom: 12,
@@ -452,19 +523,35 @@ class _GameScreenState extends State<GameScreen>
                         children: [
                           _buildDie(),
                           const SizedBox(width: 12),
-                          FilledButton.icon(
-                            onPressed:
-                                session.phase == TurnPhase.ready &&
-                                    (widget.canInteract?.call() ?? true)
-                                ? _rollDice
-                                : null,
-                            icon: const Icon(Icons.casino),
-                            label: Text(
-                              session.phase == TurnPhase.rolling
-                                  ? 'ROLLING...'
-                                  : player.reverseNextMove
-                                  ? 'ROLL BACKWARDS'
-                                  : 'ROLL DICE',
+                          Flexible(
+                            child: FilledButton.icon(
+                              onPressed:
+                                  session.isBoardInteractive &&
+                                      !session.isComputerTurn &&
+                                      (widget.canInteract?.call() ?? true)
+                                  ? session.phase ==
+                                            TurnPhase.secretSocietyAccess
+                                        ? widget.controller.finishShopping
+                                        : _rollDice
+                                  : null,
+                              icon: Icon(
+                                session.phase == TurnPhase.secretSocietyAccess
+                                    ? Icons.check_circle_outline
+                                    : Icons.casino,
+                              ),
+                              label: Text(
+                                session.isComputerTurn
+                                    ? 'COMPUTER TURN'
+                                    : session.phase ==
+                                          TurnPhase.secretSocietyAccess
+                                    ? 'END TURN'
+                                    : session.phase == TurnPhase.rolling
+                                    ? 'ROLLING...'
+                                    : player.reverseNextMove
+                                    ? 'ROLL BACKWARDS'
+                                    : 'ROLL DICE',
+                                textAlign: TextAlign.center,
+                              ),
                             ),
                           ),
                         ],
@@ -501,6 +588,31 @@ class _GameScreenState extends State<GameScreen>
           ],
         );
       },
+    );
+  }
+
+  Widget _buildToolbar({
+    required bool compact,
+    required Widget player,
+    required List<Widget> actions,
+  }) {
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          player,
+          const SizedBox(height: 8),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Flexible(child: player),
+        const SizedBox(width: 8),
+        ...actions,
+      ],
     );
   }
 
@@ -548,72 +660,101 @@ class _GameScreenState extends State<GameScreen>
     },
   );
 
-  void _showGameDetails() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.panel,
-      showDragHandle: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, updateSheet) {
-          return AnimatedBuilder(
-            animation: widget.controller,
-            builder: (context, _) => SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'PLAYERS & INVENTORY',
-                      style: TextStyle(
-                        color: AppTheme.gold,
-                        fontWeight: FontWeight.bold,
+  Future<void> _showGameDetails() async {
+    _computerDriver?.pause();
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: AppTheme.panel,
+        showDragHandle: true,
+        builder: (context) => StatefulBuilder(
+          builder: (context, updateSheet) {
+            return AnimatedBuilder(
+              animation: widget.controller,
+              builder: (context, _) => SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'PLAYERS & INVENTORY',
+                        style: TextStyle(
+                          color: AppTheme.gold,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    for (final player in widget.controller.session.players)
-                      _playerRow(player),
-                    const SizedBox(height: 12),
-                    Text(
-                      widget.online
-                          ? '${widget.controller.session.currentPlayer.name}’s turn.'
-                          : _withoutTileNumbers(
-                              widget.controller.session.message,
-                            ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.online
-                          ? 'Current tile: ${widget.controller.session.currentPlayer.position}'
-                          : widget
-                                .controller
-                                .board
-                                .tiles[widget
-                                    .controller
-                                    .session
-                                    .currentPlayer
-                                    .position]
-                                .typeLabel,
-                      style: const TextStyle(color: AppTheme.gold),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _newGame();
-                      },
-                      icon: const Icon(Icons.restart_alt),
-                      label: const Text('NEW GAME'),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      for (final player in widget.controller.session.players)
+                        _playerRow(player),
+                      const SizedBox(height: 12),
+                      Text(
+                        widget.online
+                            ? '${widget.controller.session.currentPlayer.name}’s turn.'
+                            : _withoutTileNumbers(
+                                widget.controller.session.message,
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.online
+                            ? 'Current tile: ${widget.controller.session.currentPlayer.position}'
+                            : widget
+                                  .controller
+                                  .board
+                                  .tiles[widget
+                                      .controller
+                                      .session
+                                      .currentPlayer
+                                      .position]
+                                  .typeLabel,
+                        style: const TextStyle(color: AppTheme.gold),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _showHelp,
+                        icon: const Icon(Icons.help_outline),
+                        label: const Text('HOW TO PLAY & TILE GUIDE'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _newGame();
+                        },
+                        icon: const Icon(Icons.restart_alt),
+                        label: const Text('NEW GAME'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
-      ),
-    );
+            );
+          },
+        ),
+      );
+    } finally {
+      _computerDriver?.resume();
+    }
+  }
+
+  Future<void> _showHelp() async {
+    _helpOpen = true;
+    _computerDriver?.pause();
+    _syncRendering();
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => HelpScreen(board: widget.controller.board),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        _helpOpen = false;
+        _computerDriver?.resume();
+        _syncRendering();
+      }
+    }
   }
 
   Widget _playerRow(PlayerState p) {
@@ -846,6 +987,7 @@ class _GameScreenState extends State<GameScreen>
           onPressed: _newGame,
         );
       case TurnPhase.ready:
+      case TurnPhase.secretSocietyAccess:
       case TurnPhase.rolling:
       case TurnPhase.animating:
       case TurnPhase.portalTravel:
@@ -1076,10 +1218,44 @@ class _GameScreenState extends State<GameScreen>
     ),
   );
 
+  void _showHitmanContract() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('PRIVATE HITMAN CONTRACT'),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: HitmanContractPanel(controller: widget.controller),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _secretSocietyOverlay() => _fullScreenMessage(
+    icon: Icons.visibility_off_outlined,
+    heading: 'SECRET SOCIETY',
+    subtitle:
+        'Private contracts · Cash: \$${widget.controller.session.currentPlayer.cash}',
+    highlightedName: widget.controller.session.currentPlayer.name,
+    highlightColor: AppTheme.gold,
+    extraContent: HitmanContractPanel(controller: widget.controller),
+    buttonLabel: 'LEAVE SECRET SOCIETY',
+    onPressed: widget.controller.finishShopping,
+  );
+
   Widget _shoppingOverlay() {
     final game = widget.controller;
     final player = game.session.currentPlayer;
     final hospital = game.isHospitalShopping;
+    if (game.isSecretSocietyShopping) return _secretSocietyOverlay();
     return Container(
       color: AppTheme.navy,
       child: SafeArea(
@@ -1129,6 +1305,14 @@ class _GameScreenState extends State<GameScreen>
                         style: const TextStyle(color: AppTheme.ink),
                       ),
                       const SizedBox(height: 14),
+                      if (hospital) ...[
+                        Text(
+                          'Health kits in stock: ${game.hospitalKitsAvailable} · Next kit in ${_refillCountdown(game.hospitalRefillRemaining)}',
+                          key: const ValueKey('hospital-stock'),
+                          style: const TextStyle(color: AppTheme.ink),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       _shopChoices(),
                       if (hospital &&
                           game.session.tileSummary != null &&
@@ -1154,7 +1338,7 @@ class _GameScreenState extends State<GameScreen>
                       Text(
                         hospital
                             ? 'A health pack is used automatically after a green mine, a blue mine injury, a lion attack, fire or trap door so you stay on that tile. Antidotes protect against snakes; without one, return to the antidote tile.'
-                            : 'Same-tile attacks need a 4, 5 or 6; ranged attacks need a 6 after moving. Each attack uses one weapon and earns 3 stars, with no cash reward. Police within 3 spaces arrest armed or starred players.',
+                            : 'Same-tile attacks need a 4, 5 or 6; ranged attacks need a 6. Choose to attack OR move before movement; never both. Each attack uses one weapon and earns 3 stars, with no cash reward. Police within 3 spaces arrest armed or starred players.',
                         style: const TextStyle(
                           color: Color(0xFF475959),
                           fontSize: 12,
@@ -1182,6 +1366,11 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  String _refillCountdown(Duration remaining) {
+    final seconds = (remaining.inMilliseconds / 1000).ceil();
+    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
   Widget _shopChoices() {
     final game = widget.controller;
     final player = game.session.currentPlayer;
@@ -1192,11 +1381,15 @@ class _GameScreenState extends State<GameScreen>
                 label: 'BUY ${item.label.toUpperCase()} · \$${item.price}',
                 details:
                     'Owned ${item == MedicalItem.healthPack ? player.inventory.healthPacks : player.inventory.antidotes}'
+                    '${item == MedicalItem.healthPack && game.hospitalKitsAvailable == 0 ? ' · Out of stock' : ''}'
                     '${player.cash < item.price ? ' · Need \$${item.price - player.cash} more' : ''}',
                 icon: item == MedicalItem.healthPack
                     ? Icons.medical_services_outlined
                     : Icons.medication_outlined,
-                onPressed: player.cash >= item.price
+                onPressed:
+                    player.cash >= item.price &&
+                        (item != MedicalItem.healthPack ||
+                            game.hospitalKitsAvailable > 0)
                     ? () => game.buyMedicalItem(item)
                     : null,
               ),
@@ -1207,7 +1400,7 @@ class _GameScreenState extends State<GameScreen>
                 label:
                     'BUY ${weapon.label.toUpperCase()} · \$${game.session.weaponRules.price(weapon)}',
                 details:
-                    'Range ${weapon.range} · Owned ${game.weaponCount(weapon)}',
+                    'Range ${game.weaponRange(weapon)} · Owned ${game.weaponCount(weapon)}',
                 icon: weapon == WeaponType.stabber
                     ? Icons.hardware_outlined
                     : Icons.flash_on_outlined,

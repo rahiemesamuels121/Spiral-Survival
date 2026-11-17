@@ -6,7 +6,6 @@ import 'package:spiral_pass_play/features/game/data/board_repository.dart';
 import 'package:spiral_pass_play/features/game/domain/board_definition.dart';
 import 'package:spiral_pass_play/features/game/domain/game_session.dart';
 import 'package:spiral_pass_play/features/game/domain/weapon.dart';
-import 'package:spiral_pass_play/features/game/domain/player_icon.dart';
 import 'package:spiral_pass_play/features/multiplayer/domain/room_protocol.dart';
 
 OnlineRoom roomFor(
@@ -68,50 +67,24 @@ void main() {
   });
   tearDown(() => game.dispose());
 
-  test('Players can change only their own icon outside their turn', () {
-    final before = game.session.toJson();
-    final result = executeRoomCommand(
-      room: roomFor(game.session),
-      senderId: 'u1',
-      expectedRevision: 1,
-      action: 'playerIcon',
-      args: {'icon': 'rocket'},
-      board: board,
-    );
-    final state = GameSession.fromJson(jsonDecode(result.state));
-    expect(state.players[1].icon, PlayerIcon.rocket);
-    expect(state.players.first.icon, PlayerIcon.number);
-    final expected = jsonDecode(jsonEncode(before)) as Map<String, dynamic>;
-    expected['players'][1]['icon'] = 'rocket';
-    expect(state.toJson(), expected);
-    expect(result.outcome, isEmpty);
-    for (final args in [
-      {'icon': 'unknown'},
-      {'icon': 'star', 'player': 'p1'},
-    ]) {
-      expect(
-        () => executeRoomCommand(
-          room: roomFor(game.session),
-          senderId: 'u1',
-          expectedRevision: 1,
-          action: 'playerIcon',
-          args: args,
-          board: board,
-        ),
-        throwsStateError,
-      );
+  test('Active matches reject avatar changes from every seat', () {
+    final before = jsonEncode(game.session.toJson());
+    for (final sender in ['u0', 'u1', 'outsider']) {
+      for (final icon in ['paw', 'secretAgent', 'swimmer', 'rocket']) {
+        expect(
+          () => executeRoomCommand(
+            room: roomFor(game.session),
+            senderId: sender,
+            expectedRevision: 1,
+            action: 'playerIcon',
+            args: {'icon': icon},
+            board: board,
+          ),
+          throwsStateError,
+        );
+      }
     }
-    expect(
-      () => executeRoomCommand(
-        room: roomFor(game.session),
-        senderId: 'outsider',
-        expectedRevision: 1,
-        action: 'playerIcon',
-        args: {'icon': 'star'},
-        board: board,
-      ),
-      throwsStateError,
-    );
+    expect(jsonEncode(game.session.toJson()), before);
   });
   test('Five-player room maps the current Firebase UID to its seat', () {
     final room = roomFor(game.session);
@@ -427,7 +400,7 @@ void main() {
             ..stabbers = weapon == WeaponType.stabber ? 1 : 0
             ..pewPews = weapon == WeaponType.pewPew ? 1 : 0;
           combat.session.players[1]
-            ..position = sameTile ? 10 : 17
+            ..position = sameTile ? 10 : 15
             ..cash = 25;
           combat.roll();
           combat.finishAnimation();
@@ -450,7 +423,7 @@ void main() {
             contains('Stars: +3 (2 → 5)'),
           );
           expect(attacker.inventory.stars, 2);
-          expect(combat.session.players[1].position, sameTile ? 10 : 17);
+          expect(combat.session.players[1].position, sameTile ? 10 : 15);
           for (final revision in [1, 2]) {
             expect(
               () => executeRoomCommand(

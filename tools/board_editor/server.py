@@ -21,10 +21,10 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-TYPES = ('start normal sea boat antidote rawMeat lion snake cash police fine jail '
-         'goToJail mine portal setBack moveForward shop event confusion star hospital fire trapDoor finish').split()
+TYPES = ('start normal sea surf boat antidote rawMeat lion snake cash police fine jail '
+         'goToJail mine portal setBack moveForward shop event confusion star hospital secretSociety fire trapDoor finish').split()
 ARTWORK = ('none spiral boat water skull antidote snake cash police jail mine portal back forward shop '
-           'dice star stop jet fire diamond train surf lion rawMeat hospital trapDoor confusion startFlag').split()
+           'dice star stop jet fire diamond train surf lion rawMeat hospital secretSociety trapDoor confusion startFlag').split()
 
 
 def number(value):

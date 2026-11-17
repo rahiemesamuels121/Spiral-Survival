@@ -102,7 +102,7 @@ class VectorScene {
     }
   }
 
-  String toSvg({String title = 'Spiral Quest board'}) {
+  String toSvg({String title = 'Spiral Survival board'}) {
     final defs = gradients.entries.map((entry) {
       final colors = entry.value;
       return '<linearGradient id="${entry.key}" x1="0" y1="0" x2="1" y2="1">${[for (var i = 0; i < colors.length; i++) '<stop offset="${i / (colors.length - 1)}" stop-color="${colorHex(colors[i])}"/>'].join()}</linearGradient>';

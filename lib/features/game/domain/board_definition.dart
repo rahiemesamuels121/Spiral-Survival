@@ -4,6 +4,7 @@ enum TileType {
   start,
   normal,
   sea,
+  surf,
   boat,
   antidote,
   rawMeat,
@@ -23,6 +24,7 @@ enum TileType {
   confusion,
   star,
   hospital,
+  secretSociety,
   fire,
   trapDoor,
   finish,
@@ -58,6 +60,7 @@ class BoardTile {
     'lion',
     'rawMeat',
     'hospital',
+    'secretSociety',
     'trapDoor',
     'confusion',
     'startFlag',
@@ -96,6 +99,7 @@ class BoardTile {
   final int? textColor;
   final String? artwork;
   final MineColor mineColor;
+  bool get isWater => type == TileType.sea || type == TileType.surf;
 
   Map<String, dynamic> toJson() => {
     'index': index,
@@ -124,6 +128,7 @@ class BoardTile {
     TileType.start => 'START',
     TileType.normal => 'NORMAL',
     TileType.sea => 'SEA',
+    TileType.surf => 'SURF',
     TileType.boat => 'COLLECT BOAT',
     TileType.antidote => 'COLLECT ANTIDOTE',
     TileType.rawMeat => 'COLLECT RAW MEAT',
@@ -147,6 +152,7 @@ class BoardTile {
     TileType.confusion => 'CONFUSION · NEXT MOVE BACKWARDS',
     TileType.star => 'COLLECT STAR',
     TileType.hospital => 'HOSPITAL',
+    TileType.secretSociety => 'SECRET SOCIETY',
     TileType.fire => 'FIRE · GO TO HOSPITAL',
     TileType.trapDoor => 'TRAP DOOR · MISS ONE TURN',
     TileType.finish => 'FINISH',
@@ -167,6 +173,9 @@ class BoardTile {
       // Keep previously saved custom boards and JSON imports readable.
       type: spiral
           ? TileType.portal
+          : json['type'] == 'normal' &&
+                (json['label'] as String? ?? '').trim().toUpperCase() == 'SURF'
+          ? TileType.surf
           : json['type'] == 'death'
           ? TileType.sea
           : json['type'] == 'loan'
@@ -297,7 +306,7 @@ class BoardDefinition {
   Map<String, dynamic> toJson() => {
     'id': id,
     'version': 2,
-    'title': 'Spiral Quest — Editable Vector Board',
+    'title': 'Spiral Survival — Editable Vector Board',
     'startIndex': 0,
     'finishIndex': lastIndex,
     'tiles': tiles.map((tile) => tile.toJson()).toList(),

@@ -19,6 +19,7 @@ class BoardArtwork {
     return switch (tile.type) {
       TileType.start => 'startFlag',
       TileType.sea => 'water',
+      TileType.surf => 'surf',
       TileType.boat => 'boat',
       TileType.antidote => 'antidote',
       TileType.rawMeat => 'rawMeat',
@@ -37,6 +38,7 @@ class BoardArtwork {
       TileType.confusion => 'confusion',
       TileType.star => 'star',
       TileType.hospital => 'hospital',
+      TileType.secretSociety => 'secretSociety',
       TileType.fire => 'fire',
       TileType.trapDoor => 'trapDoor',
       TileType.finish => 'stop',
@@ -114,7 +116,7 @@ class BoardArtwork {
       line: 1,
       radius: 18,
     );
-    scene.text('SPIRAL QUEST', 500, 500, size: 26, color: '#E5C889');
+    scene.text('SPIRAL SURVIVAL', 500, 500, size: 26, color: '#E5C889');
     scene.text(
       'FORTUNE  /  DANGER  /  SURVIVAL',
       500,
@@ -148,7 +150,10 @@ class BoardArtwork {
               MineColor.green => '#27834C',
             },
             TileType.normal => tile.index.isEven ? '#F8F1E2' : '#EFE5D1',
-            TileType.start || TileType.boat || TileType.sea => 'url(#blue)',
+            TileType.start ||
+            TileType.boat ||
+            TileType.sea ||
+            TileType.surf => 'url(#blue)',
             TileType.rawMeat ||
             TileType.antidote ||
             TileType.snake ||
@@ -156,7 +161,9 @@ class BoardArtwork {
             TileType.moveForward => 'url(#green)',
             TileType.jail || TileType.goToJail || TileType.star => 'url(#gold)',
             TileType.police => 'url(#navy)',
-            TileType.portal || TileType.confusion => 'url(#purple)',
+            TileType.portal ||
+            TileType.confusion ||
+            TileType.secretSociety => 'url(#purple)',
             TileType.shop || TileType.event || TileType.hospital => '#F8F1E2',
             _ => 'url(#red)',
           };
@@ -166,9 +173,11 @@ class BoardArtwork {
             TileType.start,
             TileType.boat,
             TileType.sea,
+            TileType.surf,
             TileType.police,
             TileType.portal,
             TileType.confusion,
+            TileType.secretSociety,
             TileType.fire,
             TileType.mine,
             TileType.trapDoor,
@@ -642,6 +651,25 @@ class BoardArtwork {
           stroke: '#17428F',
           line: 2,
         );
+      case 'secretSociety':
+        p.polygon(
+          [const Offset(50, 8), const Offset(94, 87), const Offset(6, 87)],
+          fill: '#172536',
+          stroke: '#D5B568',
+          line: 5,
+        );
+        p.polygon(
+          [
+            const Offset(18, 57),
+            const Offset(50, 38),
+            const Offset(82, 57),
+            const Offset(50, 72),
+          ],
+          fill: '#F4E6BB',
+          stroke: '#D5B568',
+          line: 2,
+        );
+        p.ellipse(50, 56, 10, 10, fill: '#172536');
       case 'hospital':
         p.rect(
           14,

@@ -2,15 +2,22 @@ import 'package:flutter/material.dart';
 
 /// Shared palette for the board, menus and turn cards.
 class AppTheme {
-  static const Color navy = Color(0xFF101E29);
-  static const Color panel = Color(0xFF1B303A);
-  static const Color gold = Color(0xFFD8B878);
+  static const Color ember = Color(0xFFE63C25);
+  static const Color sky = Color(0xFF64C9EE);
+  static const menuGradient = LinearGradient(
+    colors: [navy, panel, Color(0xFF39251F)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+  static const Color navy = Color(0xFF091A2B);
+  static const Color panel = Color(0xFF142E45);
+  static const Color gold = Color(0xFFFFC34A);
   static const Color text = Color(0xFFF6EFDF);
-  static const Color muted = Color(0xFFB9C6C8);
+  static const Color muted = Color(0xFFC1CFDB);
   static const Color ivory = Color(0xFFF5EEDD);
   static const Color ink = Color(0xFF203C43);
   static const Color teal = Color(0xFF276A65);
-  static const Color line = Color(0xFF40545B);
+  static const Color line = Color(0xFF3A5269);
   static const List<Color> playerColors = [
     Color(0xFFD76562),
     Color(0xFF599ED1),
@@ -26,7 +33,7 @@ class AppTheme {
     colorScheme: const ColorScheme.dark(
       primary: gold,
       onPrimary: navy,
-      secondary: Color(0xFF86BCAC),
+      secondary: Color(0xFF64C9EE),
       onSecondary: navy,
       surface: panel,
       onSurface: text,
@@ -42,7 +49,7 @@ class AppTheme {
     dividerColor: line,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: const Color(0xFF142730),
+      fillColor: const Color(0xFF0C2236),
       labelStyle: const TextStyle(color: muted),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),

@@ -1,6 +1,6 @@
 {
   "id": "survive-spiral-draft-v2",
-  "title": "Spiral Quest",
+  "title": "Spiral Survival",
   "version": 2,
   "startIndex": 0,
   "finishIndex": 119,
@@ -741,13 +741,14 @@
       "index": 60,
       "x": 0.19,
       "y": 0.438,
-      "type": "normal",
-      "label": "",
+      "type": "secretSociety",
+      "label": "SECRET SOCIETY",
       "amount": 0,
       "destination": null,
       "segment": "spiral-leg-4",
       "width": 0.05,
-      "height": 0.05
+      "height": 0.05,
+      "artwork": null
     },
     {
       "index": 61,
@@ -1118,7 +1119,7 @@
       "index": 91,
       "x": 0.5,
       "y": 0.19,
-      "type": "normal",
+      "type": "surf",
       "label": "SURF",
       "amount": 0,
       "destination": null,
@@ -1488,5 +1489,6 @@
     }
   ],
   "layoutRevision": 1,
-  "onlineBoardId": "spiral-quest-board-21f8f5fe0c18"
+  "onlineBoardId": "spiral-quest-board-3f4499e9caab",
+  "secretSocietyRevision": 1
 }

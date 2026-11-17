@@ -24,6 +24,36 @@ void main() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
   });
+  for (final customized in [false, true]) {
+    test(
+      'Secret Society migration preserves customized spaces ($customized)',
+      () async {
+        final data =
+            jsonDecode(await rootBundle.loadString(BoardRepository.assetPath))
+                as Map<String, dynamic>;
+        data.remove('secretSocietyRevision');
+        (data['tiles'] as List)[60]['type'] = customized ? 'cash' : 'normal';
+        (data['tiles'] as List)[60]['label'] = customized ? 'CUSTOM CASH' : '';
+        (data['tiles'] as List)[60]['amount'] = customized ? 75 : 0;
+        final prefs = SharedPreferencesAsync();
+        await prefs.setString(BoardRepository.customBoardKey, jsonEncode(data));
+        final board = await const BoardRepository().loadBoard();
+        expect(
+          board.tiles[60].type,
+          customized ? TileType.cash : TileType.secretSociety,
+        );
+        expect(board.id, data['id']);
+        expect(
+          await prefs.getString('spiral_custom_board_before_secret_society'),
+          isNotNull,
+        );
+        final saved = await prefs.getString(BoardRepository.customBoardKey);
+        await const BoardRepository().loadBoard();
+        expect(await prefs.getString(BoardRepository.customBoardKey), saved);
+      },
+    );
+  }
+
   test(
     'Helper board revisions are used online while local saves keep their ID',
     () async {
@@ -33,7 +63,7 @@ void main() {
       final repository = BoardRepository(bundle: _BoardBundle(data));
       expect(
         (await repository.loadOnlineBoard()).id,
-        'spiral-quest-board-abc123def456',
+        'spiral-quest-board-abc123def456-characters-v3',
       );
       expect((await repository.loadReferenceBoard()).id, reference.id);
       final invalid = reference.toJson()
@@ -55,7 +85,10 @@ void main() {
       final source =
           jsonDecode(await rootBundle.loadString(BoardRepository.assetPath))
               as Map<String, dynamic>;
-      expect(online.id, source['onlineBoardId'] ?? 'spiral-quest-board-v4');
+      expect(
+        online.id,
+        "${source['onlineBoardId'] ?? 'spiral-quest-board-v4'}-characters-v3",
+      );
       expect(online.id, isNot(local.id));
       expect(online.tiles[85].type, TileType.mine);
       expect(online.tiles[110].type, TileType.normal);

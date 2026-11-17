@@ -1,3 +1,4 @@
+import '../domain/hospital_stock.dart';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../domain/board_definition.dart';
@@ -39,13 +40,45 @@ class GameController extends ChangeNotifier {
     required this.session,
     required this.board,
     DiceRoller? diceRoller,
-  }) : _rollDie = diceRoller ?? _secureRoll {
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now,
+       _rollDie = diceRoller ?? _secureRoll {
+    if (session.computerPlayerIds.isNotEmpty &&
+            session.computerPlayerIds.length != session.players.length - 1 ||
+        session.computerPlayerIds.any(
+          (id) => !session.players.any((p) => p.id == id),
+        )) {
+      throw ArgumentError('Computer games require exactly one human player.');
+    }
     if (session.boardId != board.id) {
       throw StateError('This save belongs to another board map.');
     }
     if (session.weaponRules.stabberPrice < 0 ||
         session.weaponRules.pewPewPrice < 0) {
       throw ArgumentError('Weapon prices cannot be negative');
+    }
+    final now = _clock();
+    for (final tile in board.tiles.where((t) => t.type == TileType.hospital)) {
+      session.hospitalStocks.putIfAbsent(
+        tile.index,
+        () => HospitalStock(updatedAt: now),
+      );
+    }
+    if (session.hospitalStocks.keys.any(
+      (index) =>
+          index < 0 ||
+          index > board.lastIndex ||
+          board.tiles[index].type != TileType.hospital,
+    )) {
+      throw StateError('Hospital supplies must belong to a hospital.');
+    }
+    if ((session.hitmanOwnerId == null) != (session.hitmanTile == null) ||
+        session.hitmanTile != null &&
+            (!session.hitmanHired ||
+                session.hitmanTile! < 0 ||
+                session.hitmanTile! > board.lastIndex ||
+                !session.players.any((p) => p.id == session.hitmanOwnerId))) {
+      throw StateError('Invalid hitman contract.');
     }
     for (final player in session.players) {
       if (player.position < 0 || player.position > board.lastIndex) {
@@ -96,9 +129,20 @@ class GameController extends ChangeNotifier {
             session.pendingShopTile! > board.lastIndex ||
             (board.tiles[session.pendingShopTile!].type != TileType.shop &&
                 board.tiles[session.pendingShopTile!].type !=
-                    TileType.hospital) ||
+                    TileType.hospital &&
+                board.tiles[session.pendingShopTile!].type !=
+                    TileType.secretSociety) ||
             session.currentPlayer.position != session.pendingShopTile)) {
-      throw StateError('A shop visit must belong to a SHOP or HOSPITAL tile.');
+      throw StateError(
+        'A shop visit must belong to a SHOP, HOSPITAL or SECRET SOCIETY tile.',
+      );
+    }
+    if (session.phase == TurnPhase.secretSocietyAccess &&
+        (session.currentPlayer.icon != PlayerIcon.secretAgent ||
+            !withinSecretSocietyRange)) {
+      throw StateError(
+        'Nearby Secret Society access requires a Secret Agent within three route spaces.',
+      );
     }
     if (session.pendingPortalTile != null &&
         (session.pendingPortalTile! < 0 ||
@@ -119,11 +163,21 @@ class GameController extends ChangeNotifier {
     required List<int> colors,
     required BoardDefinition board,
     DiceRoller? diceRoller,
+    DateTime Function()? clock,
+    Set<String> computerPlayerIds = const {},
+    List<PlayerIcon>? icons,
     List<String>? eventCardOrder,
     WeaponRules weaponRules = const WeaponRules(),
   }) {
     if (names.length < 2 || names.length > 5 || colors.length < names.length) {
       throw ArgumentError('Provide 2 to 5 player names and matching colors');
+    }
+    if (icons != null &&
+        (icons.length != names.length ||
+            icons.any((icon) => !icon.isSelectable))) {
+      throw ArgumentError(
+        'Choose one of the three characters for every player.',
+      );
     }
     if (names.any((name) => name.trim().isEmpty)) {
       throw ArgumentError('Player names must not be empty');
@@ -139,12 +193,14 @@ class GameController extends ChangeNotifier {
     return GameController(
       session: GameSession(
         boardId: board.id,
+        computerPlayerIds: computerPlayerIds,
         players: [
           for (var i = 0; i < names.length; i++)
             PlayerState(
               id: 'p${i + 1}',
               name: names[i].trim(),
               colorValue: colors[i],
+              icon: icons?[i] ?? PlayerIcon.number,
             ),
         ],
         eventDrawPile: deck,
@@ -152,31 +208,142 @@ class GameController extends ChangeNotifier {
       ),
       board: board,
       diceRoller: diceRoller,
+      clock: clock,
     );
   }
 
   GameSession session;
   final BoardDefinition board;
   final DiceRoller _rollDie;
+  final DateTime Function() _clock;
   int _sequence = 0;
   bool _policeArrestThisResolution = false;
   TurnOutcome? lastOutcome;
 
   /// Online presentation and identity belong to one device, not the turn owner.
   GameSession? get localResult => null;
-  String? get localPlayerId => null;
+  String? get localPlayerId => session.isComputerGame
+      ? session.players
+            .firstWhere((p) => !session.computerPlayerIds.contains(p.id))
+            .id
+      : null;
   void dismissLocalResult() {}
 
-  bool get canChangePlayerIcon => true;
+  // Characters are fixed at construction/start; old mutation APIs cannot
+  // change a class during a saved or active match.
+  bool get canChangePlayerIcon => false;
+  void changePlayerIcon(PlayerIcon icon) {}
 
-  void changePlayerIcon(PlayerIcon icon) {
-    session.currentPlayer.icon = icon;
-    notifyListeners();
-  }
+  int weaponRange(WeaponType type) =>
+      type.range + session.currentPlayer.icon.weaponRangeBonus;
+  int get hitmanHirePrice =>
+      session.currentPlayer.icon.secretSocietyPrice(hitmanPrice);
 
   bool get isHospitalShopping =>
       session.pendingShopTile != null &&
       board.tiles[session.pendingShopTile!].type == TileType.hospital;
+
+  bool get isSecretSocietyShopping =>
+      session.pendingShopTile != null &&
+      board.tiles[session.pendingShopTile!].type == TileType.secretSociety;
+
+  int get hospitalKitsAvailable => session.pendingShopTile == null
+      ? 0
+      : session.hospitalStocks[session.pendingShopTile!]?.available(_clock()) ??
+            0;
+
+  Duration get hospitalRefillRemaining => session.pendingShopTile == null
+      ? HospitalStock.refillInterval
+      : session.hospitalStocks[session.pendingShopTile!]?.untilNext(_clock()) ??
+            HospitalStock.refillInterval;
+
+  static const hitmanPrice = 200;
+  static const hitmanRange = 20;
+  static const secretSocietyAccessRange = 3;
+
+  bool get withinSecretSocietyRange => board.tiles.any((tile) {
+    if (tile.type != TileType.secretSociety) return false;
+    final distance = (tile.index - session.currentPlayer.position).abs();
+    return distance == 0 ||
+        session.currentPlayer.icon == PlayerIcon.secretAgent &&
+            distance <= secretSocietyAccessRange;
+  });
+
+  bool get canAccessSecretSociety =>
+      session.winnerId == null &&
+      (session.isBoardInteractive && withinSecretSocietyRange ||
+          session.phase == TurnPhase.shopping && isSecretSocietyShopping);
+
+  bool get canHireHitman =>
+      canAccessSecretSociety &&
+      !session.hitmanHired &&
+      session.currentPlayer.cash >= hitmanHirePrice;
+
+  bool hireHitman(int tileIndex) {
+    if (!canHireHitman || tileIndex < 0 || tileIndex > board.lastIndex) {
+      return false;
+    }
+    session.currentPlayer.cash -= hitmanHirePrice;
+    session.hitmanHired = true;
+    session.hitmanOwnerId = session.currentPlayer.id;
+    session.hitmanTile = tileIndex;
+    // Do not put the hirer's identity or location in public messages/results.
+    notifyListeners();
+    return true;
+  }
+
+  List<int> get hitmanTargets {
+    if (session.phase != TurnPhase.ready ||
+        session.hitmanOwnerId != session.currentPlayer.id ||
+        session.hitmanTile == null ||
+        session.winnerId != null) {
+      return const [];
+    }
+    return [
+      for (var i = 0; i < session.players.length; i++)
+        if (i != session.currentPlayerIndex &&
+            session.players[i].position > 0 &&
+            (session.players[i].position - session.hitmanTile!).abs() <=
+                hitmanRange)
+          i,
+    ];
+  }
+
+  bool useHitman(int targetIndex) {
+    if (!hitmanTargets.contains(targetIndex)) return false;
+    final target = session.players[targetIndex];
+    final from = target.position;
+    target.position = 0;
+    session.hitmanOwnerId = null;
+    session.hitmanTile = null;
+    session.hitmanHired = false;
+    session.weaponActionTaken = true;
+    session.attackReplacesMove = true;
+    session.pendingShopTile = null;
+    session.lastDice = null;
+    session.message =
+        'An anonymous hitman sent ${target.name} back to START. The hirer stays in place and their turn is over.';
+    // No stars, money or public contract details identify the hirer.
+    session.tileSummary = TileSummary(
+      title: 'ANONYMOUS HITMAN',
+      message: session.message,
+      landedIndex: session.currentPlayer.position,
+      finalPosition: session.currentPlayer.position,
+      changes: ['${target.name}: tile $from → START'],
+    );
+    session.phase = TurnPhase.animating;
+    lastOutcome = TurnOutcome(
+      sequence: ++_sequence,
+      playerIndex: targetIndex,
+      dice: 1,
+      path: const [0],
+      description: session.message,
+      landedType: TileType.normal,
+      effectLabel: 'ANONYMOUS HITMAN',
+    );
+    notifyListeners();
+    return true;
+  }
 
   static int _secureRoll() => Random.secure().nextInt(6) + 1;
 
@@ -191,6 +358,7 @@ class GameController extends ChangeNotifier {
     }
     session.lastDice = dice;
     session.weaponActionTaken = false;
+    session.attackReplacesMove = false;
     session.pendingShopTile = null;
     session.pendingPortalTile = null;
     session.portalCardDirections.clear();
@@ -200,22 +368,17 @@ class GameController extends ChangeNotifier {
   }
 
   /// Phase 2. Called by Flutter after the visual dice animation ends.
-  TurnOutcome? resolveDiceRoll({bool offerSameTileChoice = true}) {
+  TurnOutcome? resolveDiceRoll({bool offerAttackChoice = true}) {
     if (session.phase != TurnPhase.rolling) return null;
     final dice = session.lastDice!;
-    if (offerSameTileChoice &&
-        dice > 3 &&
-        session.currentPlayer.inventory.hasWeapons &&
-        _nearbyPolice(session.currentPlayer.position) == null &&
-        session.players.asMap().entries.any(
-          (entry) =>
-              entry.key != session.currentPlayerIndex &&
-              entry.value.position == session.currentPlayer.position,
-        )) {
+    if (offerAttackChoice &&
+        WeaponType.values.any((type) => _targetsForRoll(type).isNotEmpty)) {
       session.phase = TurnPhase.preMoveWeaponChoice;
       notifyListeners();
       return null;
     }
+    // Committing the roll to movement closes every weapon attack for this turn.
+    session.weaponActionTaken = true;
     _policeArrestThisResolution = false;
     final playerIndex = session.currentPlayerIndex;
     final player = session.currentPlayer;
@@ -423,7 +586,8 @@ class GameController extends ChangeNotifier {
   String _applyEffect(PlayerState player, BoardTile tile, List<int> path) {
     switch (tile.type) {
       case TileType.sea:
-        if (player.inventory.boats > 0) {
+      case TileType.surf:
+        if (player.icon.canSwim || player.inventory.boats > 0) {
           var destination = tile.index;
           do {
             destination++;
@@ -435,8 +599,11 @@ class GameController extends ChangeNotifier {
                 return _arrestForContraband(player, police, path);
               }
             }
-          } while (board.tiles[destination].type == TileType.sea);
+          } while (board.tiles[destination].isWater);
           player.position = destination;
+          if (player.icon.canSwim) {
+            return 'SWIMMER: swam safely to space $destination, after the water. No boat needed.';
+          }
           return 'SEA: your boat carried you safely to space $destination, '
               'after the sea. Your boat stays in your inventory.';
         }
@@ -457,6 +624,9 @@ class GameController extends ChangeNotifier {
         player.inventory.rawMeat += count;
         return 'RAW MEAT: collected $count portion(s) to feed lions.';
       case TileType.lion:
+        if (player.icon.ignoresLions) {
+          return 'CAT WHISPERER: passed the lion safely. No raw meat or health kit was used.';
+        }
         if (player.inventory.rawMeat > 0) {
           player.inventory.rawMeat--;
           return 'LION: fed the lion one raw meat. You are safe!';
@@ -556,6 +726,9 @@ class GameController extends ChangeNotifier {
         );
         final arrest = _moveForEffect(player, destination, path);
         return arrest ?? 'Moved forward to space ${player.position}.';
+      case TileType.secretSociety:
+        session.pendingShopTile = tile.index;
+        return 'SECRET SOCIETY: private contracts are available here.';
       case TileType.shop:
         session.pendingShopTile = tile.index;
         return 'SHOP: choose whether to buy a Stabber or Pew pew. No entry fee.';
@@ -773,7 +946,7 @@ class GameController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _offerWeaponActionOrComplete();
+    _completeAfterEffects();
   }
 
   void chooseHospitalTreatment({required bool pay}) {
@@ -843,7 +1016,7 @@ class GameController extends ChangeNotifier {
   void dismissTileSummary() {
     if (session.phase != TurnPhase.specialReview) return;
     session.tileSummary = null;
-    _offerWeaponActionOrComplete();
+    _completeAfterEffects();
   }
 
   void dismissEventCard() {
@@ -870,7 +1043,7 @@ class GameController extends ChangeNotifier {
       return;
     }
     session.tileSummary = null;
-    _offerWeaponActionOrComplete();
+    _completeAfterEffects();
   }
 
   int? _closestPortal(int from, int direction) {
@@ -955,11 +1128,13 @@ class GameController extends ChangeNotifier {
       ? session.currentPlayer.inventory.stabbers
       : session.currentPlayer.inventory.pewPews;
 
-  List<int> _targetsFor(WeaponType type) {
+  List<int> _targetsForRoll(WeaponType type) {
+    final dice = session.lastDice ?? 0;
     if (session.winnerId != null ||
         session.weaponActionTaken ||
-        session.lastDice != 6 ||
-        weaponCount(type) < 1) {
+        dice < 4 ||
+        weaponCount(type) < 1 ||
+        _nearbyPolice(session.currentPlayer.position) != null) {
       return const [];
     }
     final from = session.currentPlayer.position;
@@ -967,37 +1142,29 @@ class GameController extends ChangeNotifier {
       for (var i = 0; i < session.players.length; i++)
         if (i != session.currentPlayerIndex &&
             session.players[i].position > 0 &&
-            (session.players[i].position - from).abs() <= type.range)
+            (session.players[i].position == from ||
+                dice == 6 &&
+                    (session.players[i].position - from).abs() <=
+                        weaponRange(type)))
           i,
     ];
   }
 
-  List<int> weaponTargets(WeaponType type) {
-    if (session.phase == TurnPhase.preMoveWeaponChoice) {
-      if ((session.lastDice ?? 0) <= 3 ||
-          weaponCount(type) < 1 ||
-          session.weaponActionTaken) {
-        return const [];
-      }
-      return [
-        for (var i = 0; i < session.players.length; i++)
-          if (i != session.currentPlayerIndex &&
-              session.players[i].position == session.currentPlayer.position)
-            i,
-      ];
-    }
-    return session.phase == TurnPhase.weaponAction
-        ? _targetsFor(type)
-        : const [];
-  }
+  List<int> weaponTargets(WeaponType type) =>
+      session.phase == TurnPhase.preMoveWeaponChoice
+      ? _targetsForRoll(type)
+      : const [];
 
   void chooseMovement() {
-    if (session.phase != TurnPhase.preMoveWeaponChoice) return;
+    if (session.phase != TurnPhase.preMoveWeaponChoice ||
+        session.weaponActionTaken) {
+      return;
+    }
     session.phase = TurnPhase.rolling;
-    resolveDiceRoll(offerSameTileChoice: false);
+    resolveDiceRoll(offerAttackChoice: false);
   }
 
-  void _offerWeaponActionOrComplete() {
+  void _completeAfterEffects() {
     final nearby = session.currentPlayer.inventory.hasPoliceRisk
         ? _nearbyPolice(session.currentPlayer.position)
         : null;
@@ -1005,12 +1172,17 @@ class GameController extends ChangeNotifier {
       _animateContrabandArrest(nearby);
       return;
     }
-    if (WeaponType.values.any((type) => _targetsFor(type).isNotEmpty)) {
-      session.phase = TurnPhase.weaponAction;
+    if (session.winnerId == null &&
+        !session.attackReplacesMove &&
+        session.currentPlayer.icon == PlayerIcon.secretAgent &&
+        withinSecretSocietyRange &&
+        board.tiles[session.currentPlayer.position].type !=
+            TileType.secretSociety) {
+      session.phase = TurnPhase.secretSocietyAccess;
       notifyListeners();
-    } else {
-      _completeTurn();
+      return;
     }
+    _completeTurn();
   }
 
   void skipWeaponAction() {
@@ -1028,18 +1200,27 @@ class GameController extends ChangeNotifier {
   }
 
   void finishShopping() {
+    if (session.phase == TurnPhase.secretSocietyAccess) {
+      session.pendingShopTile = null;
+      _completeTurn();
+      return;
+    }
     if (session.phase != TurnPhase.shopping) return;
     session.pendingShopTile = null;
     if (session.tileSummary != null) {
       session.phase = TurnPhase.specialReview;
       notifyListeners();
     } else {
-      _offerWeaponActionOrComplete();
+      _completeAfterEffects();
     }
   }
 
   bool buyWeapon(WeaponType type) {
-    if (session.phase != TurnPhase.shopping || isHospitalShopping) return false;
+    if (session.phase != TurnPhase.shopping ||
+        isHospitalShopping ||
+        isSecretSocietyShopping) {
+      return false;
+    }
     final player = session.currentPlayer;
     final price = session.weaponRules.price(type);
     if (player.cash < price) return false;
@@ -1083,6 +1264,10 @@ class GameController extends ChangeNotifier {
     final beforeCount = item == MedicalItem.healthPack
         ? player.inventory.healthPacks
         : player.inventory.antidotes;
+    if (item == MedicalItem.healthPack &&
+        !session.hospitalStocks[session.pendingShopTile!]!.take(_clock())) {
+      return false;
+    }
     player.cash -= item.price;
     if (item == MedicalItem.healthPack) {
       player.inventory.healthPacks++;
@@ -1153,8 +1338,7 @@ class GameController extends ChangeNotifier {
   }
 
   bool useWeapon(WeaponType type, int targetIndex) {
-    if ((session.phase != TurnPhase.weaponAction &&
-            session.phase != TurnPhase.preMoveWeaponChoice) ||
+    if (session.phase != TurnPhase.preMoveWeaponChoice ||
         !weaponTargets(type).contains(targetIndex)) {
       return false;
     }
@@ -1174,12 +1358,13 @@ class GameController extends ChangeNotifier {
       session.currentPlayer.inventory.pewPews--;
     }
     target.position = 0;
+    session.attackReplacesMove = true;
     attacker.inventory.stars += 3;
     session.weaponActionTaken = true;
     session.message =
         '${attacker.name} used a ${type.label} on ${target.name}. '
         '${target.name} returned to START. One ${type.label} was used up. '
-        '${attacker.name} gained 3 stars and no cash.';
+        '${attacker.name} gained 3 stars and no cash. The roll was used for the attack; no movement.';
     session.tileSummary = TileSummary(
       title: type.label.toUpperCase(),
       message: session.message,
@@ -1274,7 +1459,13 @@ class GameController extends ChangeNotifier {
     session.handoffMessage = skipped.isEmpty
         ? 'Previous turn complete. Keep the board hidden until ready.'
         : '${skipped.join(', ')} missed a turn. Pass the device to the next player.';
-    session.phase = TurnPhase.handoff;
+    session.phase = session.isComputerGame
+        ? TurnPhase.ready
+        : TurnPhase.handoff;
+    if (session.isComputerGame) {
+      session.message =
+          '${skipped.isEmpty ? '' : '${skipped.join(', ')} missed a turn. '}${session.currentPlayer.name}, it is your turn. Roll the dice!';
+    }
     notifyListeners();
   }
 

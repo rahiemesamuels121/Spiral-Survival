@@ -1,3 +1,4 @@
+import 'dart:async' as async;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flame/components.dart';
@@ -9,6 +10,8 @@ import '../domain/game_session.dart';
 import '../domain/player_icon.dart';
 import '../presentation/player_avatar.dart';
 import '../vector/board_artwork.dart';
+import '../vector/ambient_birds.dart';
+import '../vector/tropical_forest_backdrop.dart';
 
 /// Flame owns drawing and movement ONLY. The controller owns the rules.
 class SpiralBoardGame extends FlameGame {
@@ -16,6 +19,111 @@ class SpiralBoardGame extends FlameGame {
     : super(camera: CameraComponent());
 
   final GameController controller;
+  final _forest = TropicalForestBackdrop();
+  final ambientBirds = AmbientBirds();
+  final _birdRandom = math.Random(4821);
+  async.Timer? _birdTimer;
+  bool _mountedScene = false;
+  bool _foreground = true;
+  bool _ambientMotionEnabled = true;
+  bool _sceneVisible = true;
+
+  Rect get visibleWorld => Rect.fromCenter(
+    center: Offset(camera.viewfinder.position.x, camera.viewfinder.position.y),
+    width: canvasSize.x / camera.viewfinder.zoom,
+    height: canvasSize.y / camera.viewfinder.zoom,
+  );
+
+  void setAmbientMotionEnabled(bool enabled) {
+    _ambientMotionEnabled = enabled;
+    if (enabled) {
+      _scheduleBirds();
+    } else {
+      _stopBirds();
+      _wakeScene();
+    }
+  }
+
+  void _stopBirds() {
+    _birdTimer?.cancel();
+    _birdTimer = null;
+    ambientBirds.clear();
+  }
+
+  void _scheduleBirds() {
+    if (!_mountedScene ||
+        !_foreground ||
+        !_sceneVisible ||
+        !_ambientMotionEnabled ||
+        _birdTimer != null) {
+      return;
+    }
+    _birdTimer = async.Timer(
+      Duration(milliseconds: 10000 + _birdRandom.nextInt(10001)),
+      () {
+        _birdTimer = null;
+        if (!_mountedScene ||
+            !_foreground ||
+            !_sceneVisible ||
+            !_ambientMotionEnabled) {
+          return;
+        }
+        if (canvasSize.x > 0 && canvasSize.y > 0) {
+          ambientBirds.start(visibleWorld, reverse: _birdRandom.nextBool());
+          _wakeScene();
+        }
+        _scheduleBirds();
+      },
+    );
+  }
+
+  @override
+  void lifecycleStateChange(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) _stopBirds();
+    super.lifecycleStateChange(state);
+    if (_foreground && _sceneVisible) {
+      _scheduleBirds();
+      _wakeScene();
+    } else {
+      pauseEngine();
+    }
+  }
+
+  int _stillFrames = 0;
+  Size _terrainSize = Size.zero;
+  Path? _terrainClip;
+
+  /// Hidden overlays remain paused even when online state changes arrive.
+  void setSceneVisible(bool visible) {
+    _sceneVisible = visible;
+    if (visible) {
+      _scheduleBirds();
+      _wakeScene();
+    } else {
+      _stopBirds();
+      pauseEngine();
+    }
+  }
+
+  void _wakeScene() {
+    _stillFrames = 0;
+    if (_sceneVisible && _foreground) resumeEngine();
+  }
+
+  // Both artwork layers use precisely the same camera transform.
+  void _worldCanvas(Canvas canvas, VoidCallback draw) {
+    canvas.save();
+    canvas.translate(canvasSize.x / 2, canvasSize.y / 2);
+    canvas.scale(camera.viewfinder.zoom);
+    canvas.translate(
+      -camera.viewfinder.position.x,
+      -camera.viewfinder.position.y,
+    );
+    draw();
+    canvas.restore();
+  }
+
   final Map<int, PlayerToken> _tokens = {};
   int _lastHandledSequence = 0;
   PlayerToken? _cameraToken;
@@ -56,13 +164,14 @@ class SpiralBoardGame extends FlameGame {
 
   void zoomBoard(double factor, {Offset? focalPoint}) {
     if (_cameraToken != null ||
-        controller.session.phase != TurnPhase.ready ||
+        !controller.session.isBoardInteractive ||
         !factor.isFinite ||
         factor <= 0 ||
         canvasSize.x <= 0) {
       return;
     }
     _idleFocusTarget = null;
+    _wakeScene();
     final oldZoom = camera.viewfinder.zoom;
     final zoom = (oldZoom * factor).clamp(_minimumZoom, _widthFitZoom * 4);
     final point = focalPoint ?? Offset(canvasSize.x / 2, canvasSize.y / 2);
@@ -80,7 +189,7 @@ class SpiralBoardGame extends FlameGame {
   }
 
   void fitBoardWidth() {
-    if (_cameraToken != null || controller.session.phase != TurnPhase.ready) {
+    if (_cameraToken != null || !controller.session.isBoardInteractive) {
       return;
     }
     _manualZoomScale = 1;
@@ -89,6 +198,7 @@ class SpiralBoardGame extends FlameGame {
 
   void focusCurrentPlayer({bool animate = true}) {
     if (_cameraToken != null || canvasSize.x <= 0) return;
+    _wakeScene();
     camera.viewfinder.zoom = _idleZoom;
     final target = _focusPosition(
       _positionForPlayer(
@@ -108,9 +218,11 @@ class SpiralBoardGame extends FlameGame {
   }
 
   void panBoard(Offset delta) {
-    if (_cameraToken != null || controller.session.phase != TurnPhase.ready) {
+    if (_cameraToken != null || !controller.session.isBoardInteractive) {
       return;
     }
+    if (delta == Offset.zero) return;
+    _wakeScene();
     _idleFocusTarget = null;
     camera.viewfinder.position = _focusPosition(
       camera.viewfinder.position -
@@ -142,8 +254,64 @@ class SpiralBoardGame extends FlameGame {
   }
 
   @override
+  Color backgroundColor() => const Color(0xFF091A2B);
+
+  @override
+  void render(Canvas canvas) {
+    if (canvasSize.x <= 0 || canvasSize.y <= 0) return;
+    final zoom = camera.viewfinder.zoom;
+    final viewportWorld = Rect.fromCenter(
+      center: Offset(
+        camera.viewfinder.position.x,
+        camera.viewfinder.position.y,
+      ),
+      width: canvasSize.x / zoom,
+      height: canvasSize.y / zoom,
+    );
+    // A close-up fills the viewport with the board; no terrain work is needed.
+    if (!const Rect.fromLTWH(
+          0,
+          0,
+          1000,
+          1000,
+        ).contains(viewportWorld.topLeft) ||
+        viewportWorld.right > 1000 ||
+        viewportWorld.bottom > 1000) {
+      final terrainSize = Size(
+        canvasSize.x / _minimumZoom + 1000,
+        canvasSize.y / _minimumZoom + 1000,
+      );
+      if (_terrainSize != terrainSize || _terrainClip == null) {
+        _terrainSize = terrainSize;
+        _terrainClip = Path()
+          ..fillType = PathFillType.evenOdd
+          ..addRect(Offset.zero & terrainSize)
+          ..addRect(
+            Rect.fromLTWH(
+              terrainSize.width / 2 - 500,
+              terrainSize.height / 2 - 500,
+              1000,
+              1000,
+            ),
+          );
+      }
+      _worldCanvas(canvas, () {
+        canvas.translate(
+          500 - terrainSize.width / 2,
+          500 - terrainSize.height / 2,
+        );
+        canvas.clipPath(_terrainClip!);
+        _forest.paint(canvas, terrainSize);
+      });
+    }
+    super.render(canvas);
+    _worldCanvas(canvas, () => ambientBirds.paint(canvas));
+  }
+
+  @override
   void update(double dt) {
     super.update(dt);
+    ambientBirds.update(dt);
     final token = _cameraToken;
     if (token == null) {
       final target = _idleFocusTarget;
@@ -154,6 +322,19 @@ class SpiralBoardGame extends FlameGame {
         camera.viewfinder.position =
             _idleFocusFrom + (target - _idleFocusFrom) * eased;
         if (t >= 1) _idleFocusTarget = null;
+      }
+      final phase = controller.session.phase;
+      final active =
+          ambientBirds.isFlying ||
+          _idleFocusTarget != null ||
+          phase == TurnPhase.rolling ||
+          phase == TurnPhase.animating ||
+          phase == TurnPhase.portalTravel;
+      if (active) {
+        _stillFrames = 0;
+      } else if (++_stillFrames >= 2) {
+        // The last update still paints once before the ticker stops.
+        pauseEngine();
       }
       return;
     }
@@ -215,6 +396,7 @@ class SpiralBoardGame extends FlameGame {
     focusCurrentPlayer(animate: false);
 
     await world.add(VectorBoardComponent(controller.board));
+    await world.add(HitmanMarker(controller));
     for (final tile in controller.board.tiles) {
       if (tile.type == TileType.portal) {
         await world.add(
@@ -245,6 +427,8 @@ class SpiralBoardGame extends FlameGame {
   @override
   void onMount() {
     super.onMount();
+    _mountedScene = true;
+    _scheduleBirds();
     // Responsive layout changes can remount the same game without reloading it.
     controller.addListener(_onControllerChanged);
     focusCurrentPlayer(animate: false);
@@ -261,7 +445,8 @@ class SpiralBoardGame extends FlameGame {
   }
 
   void _onControllerChanged() {
-    final ready = controller.session.phase == TurnPhase.ready;
+    _wakeScene();
+    final ready = controller.session.isBoardInteractive;
     if (ready && !_wasReady ||
         controller.session.phase == TurnPhase.rolling && _wasReady) {
       focusCurrentPlayer();
@@ -359,6 +544,9 @@ class SpiralBoardGame extends FlameGame {
 
   @override
   void onRemove() {
+    _mountedScene = false;
+    _stopBirds();
+    _forest.dispose();
     controller.removeListener(_onControllerChanged);
     super.onRemove();
   }
@@ -643,5 +831,46 @@ class LandingPulse extends PositionComponent {
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: 150);
     painter.paint(canvas, Offset(80 - painter.width / 2, 5 - 25 * progress));
+  }
+}
+
+/// The marker is rendered only for the hirer, including pass-and-play turns.
+class HitmanMarker extends Component {
+  HitmanMarker(this.controller) : super(priority: 20);
+  final GameController controller;
+  final Paint _fill = Paint()..color = const Color(0xFF172536);
+  final Paint _rim = Paint()
+    ..color = const Color(0xFFD5B568)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2;
+  final TextPaint _label = TextPaint(
+    style: const TextStyle(
+      fontSize: 13,
+      color: Color(0xFFF4E6BB),
+      fontWeight: FontWeight.w900,
+    ),
+  );
+
+  bool get visibleToViewer {
+    final session = controller.session;
+    final viewer = controller.localPlayerId ?? session.currentPlayer.id;
+    return session.isBoardInteractive &&
+        session.hitmanOwnerId == viewer &&
+        session.hitmanTile != null;
+  }
+
+  @override
+  void render(Canvas canvas) {
+    if (!visibleToViewer) return;
+    final tile = controller.board.tiles[controller.session.hitmanTile!];
+    final point = Offset(tile.x * 1000, tile.y * 1000 - 18);
+    canvas.drawCircle(point, 12, _fill);
+    canvas.drawCircle(point, 12, _rim);
+    _label.render(
+      canvas,
+      'H',
+      Vector2(point.dx, point.dy),
+      anchor: Anchor.center,
+    );
   }
 }

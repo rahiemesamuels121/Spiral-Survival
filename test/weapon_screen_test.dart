@@ -73,7 +73,7 @@ void main() {
             board: _board(),
             diceRoller: () => beforeMoving ? 4 : 6,
           );
-          game.session.players.first.position = beforeMoving ? 20 : 10;
+          game.session.players.first.position = beforeMoving ? 20 : 16;
           game.session.players.first.inventory.stabbers = 1;
           game.session.players.first.inventory.pewPews = 1;
           for (var i = 1; i < game.session.players.length; i++) {
@@ -102,7 +102,7 @@ void main() {
           await tester.ensureVisible(lastPewTarget);
           expect(lastPewTarget.hitTestable(), findsOneWidget);
           final alternateAction = find.text(
-            beforeMoving ? 'MOVE 4 SPACES' : 'END TURN',
+            beforeMoving ? 'MOVE 4 SPACES' : 'MOVE 6 SPACES',
           );
           await tester.ensureVisible(alternateAction);
           expect(alternateAction.hitTestable(), findsOneWidget);
@@ -377,7 +377,7 @@ void main() {
         board: board,
         diceRoller: () => 6,
       );
-      original.session.players.first.position = 10;
+      original.session.players.first.position = 16;
       original.session.players.first.inventory.stabbers = 1;
       original.session.players.first.inventory.pewPews = 1;
       original.session.players[1].position = 21;

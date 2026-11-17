@@ -7,7 +7,12 @@ service cloud.firestore {
     function roomKeys(data) {
       return data.keys().hasOnly(['hostId', 'members', 'playerOrder', 'status', 'revision',
         'boardId', 'state', 'outcome', 'activeUid', 'lastRequestId', 'lastError',
-        'hostSeen', 'createdAt', 'expiresAt']);
+        'hostSeen', 'createdAt', 'expiresAt', 'avatars']);
+    }
+    function avatarMap(data) {
+      return data.avatars is map &&
+        data.avatars.keys().toSet() == data.members.keys().toSet() &&
+        data.avatars.values().toSet().hasOnly(['paw', 'secretAgent', 'swimmer']);
     }
     function membership(data) {
       return data.members is map && data.playerOrder is list &&
@@ -21,7 +26,7 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn() && code.matches('^[A-HJ-NP-Z2-9]{8}$') &&
-        roomKeys(request.resource.data) && membership(request.resource.data) &&
+        roomKeys(request.resource.data) && membership(request.resource.data) && avatarMap(request.resource.data) &&
         request.resource.data.hostId == request.auth.uid &&
         request.resource.data.members.keys().hasOnly([request.auth.uid]) &&
         validName(request.resource.data.members[request.auth.uid]) &&
@@ -36,12 +41,13 @@ service cloud.firestore {
         request.resource.data.expiresAt <= request.time + duration.value(25, 'h');
 
       function onlyMembershipChanged() {
-        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'playerOrder']);
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'playerOrder', 'avatars']);
       }
       function join() {
         return live(resource.data) && resource.data.status == 'waiting' &&
           !(request.auth.uid in resource.data.members) && resource.data.members.size() < 5 &&
-          onlyMembershipChanged() && membership(request.resource.data) &&
+          onlyMembershipChanged() && membership(request.resource.data) && avatarMap(request.resource.data) &&
+          request.resource.data.avatars.diff(resource.data.avatars).affectedKeys().hasOnly([request.auth.uid]) &&
           request.resource.data.members.diff(resource.data.members).affectedKeys().hasOnly([request.auth.uid]) &&
           request.resource.data.members.size() == resource.data.members.size() + 1 &&
           validName(request.resource.data.members[request.auth.uid]) &&
@@ -49,10 +55,17 @@ service cloud.firestore {
       }
       function leaveLobby() {
         return resource.data.status == 'waiting' && request.auth.uid != resource.data.hostId &&
-          request.auth.uid in resource.data.members && onlyMembershipChanged() && membership(request.resource.data) &&
+          request.auth.uid in resource.data.members && onlyMembershipChanged() && membership(request.resource.data) && avatarMap(request.resource.data) &&
+          request.resource.data.avatars.diff(resource.data.avatars).affectedKeys().hasOnly([request.auth.uid]) &&
           request.resource.data.members.diff(resource.data.members).affectedKeys().hasOnly([request.auth.uid]) &&
           !(request.auth.uid in request.resource.data.members) &&
           request.resource.data.playerOrder == resource.data.playerOrder.removeAll([request.auth.uid]);
+      }
+      function chooseAvatar() {
+        return live(resource.data) && resource.data.status == 'waiting' &&
+          request.auth.uid in resource.data.members && avatarMap(request.resource.data) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avatars']) &&
+          request.resource.data.avatars.diff(resource.data.avatars).affectedKeys().hasOnly([request.auth.uid]);
       }
       function hostUpdate() {
         return request.auth.uid == resource.data.hostId && roomKeys(request.resource.data) &&
@@ -73,23 +86,32 @@ service cloud.firestore {
           (request.resource.data.status != 'playing' ||
             live(resource.data) && request.resource.data.activeUid in resource.data.playerOrder);
       }
-      allow update: if signedIn() && (join() || leaveLobby() || hostUpdate());
+      allow update: if signedIn() && (join() || leaveLobby() || chooseAvatar() || hostUpdate());
       allow delete: if signedIn() && request.auth.uid == resource.data.hostId;
+
+      // Only the host runs the authoritative rules. Each member receives their
+      // own finances and contract; other members cannot read those documents.
+      match /authority/{document} {
+        function parent() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
+        allow read, write: if signedIn() && request.auth.uid == parent().hostId;
+      }
+      match /private/{playerId} {
+        function parent() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
+        allow get: if signedIn() && request.auth.uid == playerId && request.auth.uid in parent().members;
+        allow write: if signedIn() && request.auth.uid == parent().hostId;
+      }
 
       match /requests/{playerId} {
         function room() { return get(/databases/$(database)/documents/rooms/$(code)).data; }
         allow read: if signedIn() && (request.auth.uid == room().hostId || request.auth.uid == playerId && request.auth.uid in room().members);
         allow create, update: if signedIn() && request.auth.uid == playerId &&
           request.auth.uid in room().members &&
-          (room().activeUid == request.auth.uid || request.resource.data.action == 'playerIcon') &&
+          room().activeUid == request.auth.uid &&
           room().status == 'playing' && live(room()) &&
           request.resource.data.keys().hasOnly(['requestId', 'action', 'args', 'expectedRevision', 'createdAt']) &&
           request.resource.data.requestId is string && request.resource.data.requestId.size() <= 128 &&
-          request.resource.data.action in ['roll', 'move', 'review', 'event', 'hospital', 'healthPack', 'police', 'portal', 'buy', 'medicalBuy', 'attack', 'shopDone', 'endTurn', 'playerIcon'] &&
-          request.resource.data.args is map && request.resource.data.args.keys().hasOnly(['pay', 'card', 'weapon', 'target', 'item', 'icon']) &&
-          (request.resource.data.action != 'playerIcon' ||
-            request.resource.data.args.keys().hasOnly(['icon']) &&
-            request.resource.data.args.icon in ['number', 'star', 'rocket', 'shield', 'paw', 'bolt', 'diamond', 'flag']) &&
+          request.resource.data.action in ['roll', 'move', 'review', 'event', 'hospital', 'healthPack', 'police', 'portal', 'buy', 'medicalBuy', 'attack', 'shopDone', 'endTurn', 'hitmanHire', 'hitmanAttack'] &&
+          request.resource.data.args is map && request.resource.data.args.keys().hasOnly(['pay', 'card', 'weapon', 'target', 'item', 'tile']) &&
           request.resource.data.expectedRevision == room().revision &&
           request.resource.data.createdAt == request.time;
         allow delete: if signedIn() && request.auth.uid == room().hostId;

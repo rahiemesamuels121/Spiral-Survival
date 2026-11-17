@@ -23,8 +23,11 @@ class OnlineRoom {
     required this.lastError,
     required this.hostSeen,
     required this.expiresAt,
+    this.avatars = const {},
   });
   final String code, hostId, status, state, outcome, lastRequestId, lastError;
+  final Map<String, PlayerIcon> avatars;
+  PlayerIcon avatarFor(String uid) => avatars[uid] ?? PlayerIcon.paw;
   final Map<String, String> members;
   final List<String> playerOrder;
   final int revision;
@@ -59,21 +62,11 @@ RoomCommandResult executeRoomCommand({
   if (room.status != 'playing' ||
       room.expired ||
       !room.playerOrder.contains(senderId) ||
-      (action != 'playerIcon' && room.activeUid != senderId) ||
+      room.activeUid != senderId ||
       expectedRevision != room.revision) {
     throw StateError(
       'That turn has changed. Wait for your turn and try again.',
     );
-  }
-  if (action == 'playerIcon') {
-    if (args.length != 1 || args['icon'] is! String) {
-      throw StateError('Choose a player icon.');
-    }
-    final icon = PlayerIcon.values.where((icon) => icon.name == args['icon']);
-    if (icon.isEmpty) throw StateError('Choose a valid player icon.');
-    final state = room.session!;
-    state.players[room.playerOrder.indexOf(senderId)].icon = icon.single;
-    return RoomCommandResult(jsonEncode(state.toJson()), '');
   }
   const allowed = <String, Set<String>>{
     'roll': {},
@@ -88,6 +81,8 @@ RoomCommandResult executeRoomCommand({
     'portal': {'card'},
     'buy': {'weapon'},
     'medicalBuy': {'item'},
+    'hitmanHire': {'tile'},
+    'hitmanAttack': {'target'},
     'attack': {'weapon', 'target'},
   };
   if (!allowed.containsKey(action) ||
@@ -127,6 +122,18 @@ RoomCommandResult executeRoomCommand({
         game.choosePortalCard(card);
       case 'buy':
         game.buyWeapon(WeaponType.values.byName(args['weapon'] as String));
+      case 'hitmanHire':
+        if (args.length != 1 ||
+            args['tile'] is! int ||
+            !game.hireHitman(args['tile'] as int)) {
+          throw StateError('This contract is not available.');
+        }
+      case 'hitmanAttack':
+        if (args.length != 1 ||
+            args['target'] is! int ||
+            !game.useHitman(args['target'] as int)) {
+          throw StateError('Choose a target within 20 spaces.');
+        }
       case 'medicalBuy':
         final item = MedicalItem.values.where(
           (item) => item.name == args['item'],

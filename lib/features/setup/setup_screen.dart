@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../app/theme.dart';
+import '../../app/platform/lobby_music.dart';
 import '../game/application/game_controller.dart';
 import '../game/data/session_store.dart';
 import '../game/data/board_repository.dart';
@@ -8,10 +9,11 @@ import '../game/domain/game_session.dart';
 import '../game/presentation/game_screen.dart';
 import '../game/presentation/player_avatar.dart';
 import '../game/domain/player_icon.dart';
-import '../multiplayer/presentation/online_room_screen.dart';
+import '../help/help_screen.dart';
 
 class GameSetupScreen extends StatefulWidget {
-  const GameSetupScreen({super.key});
+  const GameSetupScreen({this.vsComputer = false, super.key});
+  final bool vsComputer;
 
   @override
   State<GameSetupScreen> createState() => _GameSetupScreenState();
@@ -21,9 +23,9 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _store = SessionStore();
   late final List<TextEditingController> _names;
-  final _icons = List.filled(5, PlayerIcon.number);
+  final _icons = List.filled(5, PlayerIcon.paw);
+  bool get _vsComputer => widget.vsComputer;
   int _count = 3; // Requested default: Player 1, Player 2, Player 3.
-  GameSession? _saved;
   late final Future<BoardDefinition> _boardFuture;
 
   @override
@@ -33,13 +35,8 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
       5,
       (i) => TextEditingController(text: 'Player ${i + 1}'),
     );
+    _count = _vsComputer ? 2 : 3;
     _boardFuture = const BoardRepository().loadBoard();
-    _refreshSave();
-  }
-
-  Future<void> _refreshSave() async {
-    final saved = await _store.load();
-    if (mounted) setState(() => _saved = saved);
   }
 
   @override
@@ -63,11 +60,16 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
       final controller = GameController(session: session, board: board);
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => GameScreen(controller: controller),
+          settings: const RouteSettings(name: LobbyMusicController.gameRoute),
+          builder: (_) => GameScreen(
+            controller: controller,
+            canInteract: session.isComputerGame
+                ? () => !controller.session.isComputerTurn
+                : null,
+          ),
         ),
       );
       controller.dispose();
-      if (mounted) await _refreshSave();
     } catch (error) {
       if (mounted) _showError('Could not load the board: $error');
     }
@@ -81,7 +83,22 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
 
   Future<void> _startGame() async {
     if (!_formKey.currentState!.validate()) return;
-    final names = _names.take(_count).map((e) => e.text.trim()).toList();
+    final names = _names
+        .take(_vsComputer ? 1 : _count)
+        .map((e) => e.text.trim())
+        .toList();
+    if (_vsComputer) {
+      for (var i = 1; i < _count; i++) {
+        var number = i;
+        var name = 'Computer $number';
+        while (names.any(
+          (value) => value.toLowerCase() == name.toLowerCase(),
+        )) {
+          name = 'Computer ${++number}';
+        }
+        names.add(name);
+      }
+    }
     if (names.map((e) => e.toLowerCase()).toSet().length != _count) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please give each player a unique name.')),
@@ -94,10 +111,17 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
         names: names,
         colors: AppTheme.playerColors.map((c) => c.toARGB32()).toList(),
         board: board,
+        icons: [
+          for (var i = 0; i < _count; i++)
+            _vsComputer && i > 0
+                ? PlayerIcon.selectable[(i - 1) % PlayerIcon.selectable.length]
+                : _icons[i],
+        ],
+        computerPlayerIds: {
+          if (_vsComputer)
+            for (var i = 1; i < _count; i++) 'p${i + 1}',
+        },
       );
-      for (var i = 0; i < _count; i++) {
-        controller.session.players[i].icon = _icons[i];
-      }
       await _store.clear();
       if (!mounted) return;
       await _openGame(controller.session);
@@ -107,17 +131,45 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
     }
   }
 
+  Future<void> _chooseCharacter(int index) async {
+    final icon = await pickPlayerIcon(
+      context,
+      selected: _icons[index],
+      color: AppTheme.playerColors[index],
+      number: index + 1,
+    );
+    if (icon != null && mounted) setState(() => _icons[index] = icon);
+  }
+
+  Future<void> _showHelp() async {
+    BoardDefinition? board;
+    try {
+      board = await _boardFuture;
+    } catch (_) {
+      // Rules remain available even if a custom board cannot be loaded.
+    }
+    if (!mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => HelpScreen(board: board)));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF101E29), Color(0xFF243E47), Color(0xFF101E29)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      appBar: AppBar(
+        title: Text(_vsComputer ? 'VS COMPUTER SETUP' : 'PASS & PLAY SETUP'),
+        actions: [
+          const LobbyMusicButton(),
+          IconButton(
+            tooltip: 'How to play',
+            onPressed: _showHelp,
+            icon: const Icon(Icons.help_outline),
           ),
-        ),
+        ],
+      ),
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppTheme.menuGradient),
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(
@@ -129,21 +181,25 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Text(
-                        'SPIRAL QUEST',
+                      Text(
+                        _vsComputer
+                            ? 'YOUR OPPONENTS & AVATAR'
+                            : 'PLAYERS & AVATARS',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 38,
+                        style: const TextStyle(
+                          fontSize: 28,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 4,
                           color: AppTheme.gold,
                         ),
                       ),
                       const SizedBox(height: 5),
-                      const Text(
-                        'LOCAL PASS & PLAY • 2–5 PLAYERS',
+                      Text(
+                        _vsComputer
+                            ? 'Choose your opponents, name and character.'
+                            : 'Choose the player count, names and characters.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: AppTheme.muted,
                           letterSpacing: 2,
                         ),
@@ -170,45 +226,50 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            const Text('Number of players'),
+                            Text(
+                              _vsComputer
+                                  ? 'Number of computer opponents'
+                                  : 'Number of players',
+                            ),
                             const SizedBox(height: 8),
                             Wrap(
                               spacing: 8,
                               children: [
-                                for (var n = 2; n <= 5; n++)
+                                for (
+                                  var n = (_vsComputer ? 1 : 2);
+                                  n <= (_vsComputer ? 4 : 5);
+                                  n++
+                                )
                                   ChoiceChip(
                                     label: Text(
                                       '$n',
                                       style: TextStyle(
-                                        color: _count == n
+                                        color:
+                                            _count == (_vsComputer ? n + 1 : n)
                                             ? AppTheme.navy
                                             : AppTheme.text,
                                       ),
                                     ),
-                                    selected: _count == n,
-                                    onSelected: (_) =>
-                                        setState(() => _count = n),
+                                    selected:
+                                        _count == (_vsComputer ? n + 1 : n),
+                                    onSelected: (_) => setState(
+                                      () => _count = _vsComputer ? n + 1 : n,
+                                    ),
                                   ),
                               ],
                             ),
                             const SizedBox(height: 18),
-                            for (var i = 0; i < _count; i++) ...[
+                            for (
+                              var i = 0;
+                              i < (_vsComputer ? 1 : _count);
+                              i++
+                            ) ...[
                               Row(
                                 children: [
                                   Tooltip(
                                     message: 'Change Player ${i + 1} icon',
                                     child: InkWell(
-                                      onTap: () async {
-                                        final icon = await pickPlayerIcon(
-                                          context,
-                                          selected: _icons[i],
-                                          color: AppTheme.playerColors[i],
-                                          number: i + 1,
-                                        );
-                                        if (icon != null && mounted) {
-                                          setState(() => _icons[i] = icon);
-                                        }
-                                      },
+                                      onTap: () => _chooseCharacter(i),
                                       child: PlayerAvatar(
                                         icon: _icons[i],
                                         color: AppTheme.playerColors[i],
@@ -222,7 +283,9 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                                       controller: _names[i],
                                       maxLength: 16,
                                       decoration: InputDecoration(
-                                        labelText: 'Player ${i + 1} name',
+                                        labelText: _vsComputer
+                                            ? 'Your name'
+                                            : 'Player ${i + 1} name',
                                         counterText: '',
                                         isDense: true,
                                       ),
@@ -234,15 +297,29 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                                   ),
                                 ],
                               ),
+                              TextButton.icon(
+                                onPressed: () => _chooseCharacter(i),
+                                icon: const Icon(Icons.badge_outlined),
+                                label: Text(
+                                  '${_icons[i].label} · CHOOSE AVATAR',
+                                ),
+                              ),
                               const SizedBox(height: 12),
                             ],
-                            const Row(
+                            Row(
                               children: [
-                                Icon(Icons.group, color: AppTheme.gold),
-                                SizedBox(width: 9),
+                                Icon(
+                                  _vsComputer
+                                      ? Icons.smart_toy_outlined
+                                      : Icons.group,
+                                  color: AppTheme.gold,
+                                ),
+                                const SizedBox(width: 9),
                                 Expanded(
                                   child: Text(
-                                    'Local multiplayer • One Android device',
+                                    _vsComputer
+                                        ? 'You vs ${_count - 1} computer opponent${_count == 2 ? '' : 's'} • Offline'
+                                        : 'Local multiplayer • One Android device',
                                   ),
                                 ),
                               ],
@@ -253,33 +330,13 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                               child: FilledButton.icon(
                                 onPressed: _startGame,
                                 icon: const Icon(Icons.casino),
-                                label: const Text('START GAME'),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => const OnlineRoomScreen(),
-                                  ),
-                                ),
-                                icon: const Icon(Icons.public_rounded),
-                                label: const Text('PLAY ONLINE'),
-                              ),
-                            ),
-                            if (_saved != null) ...[
-                              const SizedBox(height: 10),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _openGame(_saved!),
-                                  icon: const Icon(Icons.play_circle_outline),
-                                  label: const Text('CONTINUE SAVED GAME'),
+                                label: Text(
+                                  _vsComputer
+                                      ? 'START VS COMPUTER'
+                                      : 'START GAME',
                                 ),
                               ),
-                            ],
+                            ),
                           ],
                         ),
                       ),

@@ -1,7 +1,7 @@
 name: spiral_pass_play
 description: Spiral board game with local pass-and-play and private five-player online rooms.
 publish_to: none
-version: 1.1.5+9
+version: 1.2.3+17
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -25,3 +25,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/boards/spiral_board_map.json
+    - assets/branding/spiral_survival.png
+    - assets/audio/lobby.mp3

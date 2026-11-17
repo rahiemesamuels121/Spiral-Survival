@@ -1,6 +1,8 @@
 import 'package:flame/game.dart' show GameWidget;
 import 'package:flame/components.dart' show Vector2;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:spiral_pass_play/app/platform/game_screen_awake.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
@@ -12,6 +14,111 @@ import 'package:spiral_pass_play/features/game/presentation/game_screen.dart';
 import 'package:spiral_pass_play/features/game/presentation/turn_result_visual.dart';
 
 void main() {
+  for (final online in [false, true]) {
+    testWidgets('Portrait controls and rotation work (online: $online)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.25;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      SharedPreferencesAsyncPlatform.instance =
+          InMemorySharedPreferencesAsync.empty();
+      final awakeCalls = <bool>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        GameScreenAwake.channel,
+        (call) async {
+          awakeCalls.add(call.arguments as bool);
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          GameScreenAwake.channel,
+          null,
+        ),
+      );
+      final orientationCalls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemChrome.setPreferredOrientations') {
+            orientationCalls.add(call);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      final board = (await tester.runAsync(
+        () => const BoardRepository().loadReferenceBoard(),
+      ))!;
+      final controller = GameController.newGame(
+        names: ['A player with a long name', 'Two'],
+        colors: [0xFFFF0000, 0xFF00FF00],
+        board: board,
+      );
+      controller.session.currentPlayer.reverseNextMove = true;
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GameScreen(
+              controller: controller,
+              online: online,
+              onlineStatus: () => 'Connected · Waiting for another player',
+            ),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      for (final size in [
+        const Size(320, 640),
+        const Size(800, 360),
+        const Size(390, 844),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pump();
+        await tester.pump();
+        for (final tooltip in [
+          'Focus current player',
+          'Character abilities',
+          'Players and inventory',
+          'Exit game',
+          'Zoom in',
+          'Zoom out',
+          'Fit board to width',
+        ]) {
+          expect(find.byTooltip(tooltip).hitTestable(), findsOneWidget);
+        }
+        expect(find.text('ROLL BACKWARDS').hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        expect(controller.session.currentPlayer.reverseNextMove, isTrue);
+      }
+      expect(orientationCalls, isEmpty);
+      await tester.tap(find.byTooltip('Zoom in'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('Fit board to width'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('Players and inventory'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('PLAYERS & INVENTORY'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      expect(awakeCalls, [true]);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(awakeCalls, [true, false]);
+      controller.dispose();
+    });
+  }
+
   for (final payFine in [true, false]) {
     testWidgets(
       'Police dialog offers the ${payFine ? 'payment' : 'missed turn'} choice after resume',

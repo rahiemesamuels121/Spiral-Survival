@@ -68,7 +68,7 @@ void main() {
           } else {
             expect(game.session.phase, TurnPhase.preMoveWeaponChoice);
             expect(player.position, 10);
-            expect(game.weaponTargets(weapon), [1]);
+            expect(game.weaponTargets(weapon), roll == 6 ? [1, 2] : [1]);
             expect(game.useWeapon(weapon, 1), isTrue);
             expect(game.session.players[1].position, 0);
             expect(game.weaponCount(weapon), 0);
@@ -165,17 +165,17 @@ void main() {
       test(
         '${type.label} can reach exactly ${type.range} spaces in direction $direction',
         () {
-          final game = weaponGame();
+          final game = weaponGame(from: 20);
           final attacker = game.session.players.first;
           attacker.inventory.stabbers = 1;
           attacker.inventory.pewPews = 1;
           final target = game.session.players[1];
-          target.position = 16 + direction * type.range;
+          target.position = 20 + direction * type.range;
           target.cash = 70;
           target.inventory.antidotes = 1;
           game.roll();
           game.finishAnimation();
-          expect(game.session.phase, TurnPhase.weaponAction);
+          expect(game.session.phase, TurnPhase.preMoveWeaponChoice);
           expect(game.weaponTargets(type), contains(1));
           final restored = GameController(
             session: GameSession.fromJson(game.session.toJson()),
@@ -211,8 +211,8 @@ void main() {
         final game = weaponGame();
         game.session.players.first.inventory.stabbers = 1;
         game.session.players.first.inventory.pewPews = 1;
-        game.session.players[1].position = 16 + type.range + 1;
-        game.session.players[2].position = 17;
+        game.session.players[1].position = 10 + type.range + 1;
+        game.session.players[2].position = 11;
         game.roll();
         game.finishAnimation();
         expect(game.useWeapon(type, 0), isFalse);
@@ -239,14 +239,17 @@ void main() {
     });
   }
 
-  test('An optional attack can be skipped without consuming a weapon', () {
+  test('Choosing movement spends the roll and prevents an attack', () {
     final game = weaponGame();
     game.session.players.first.inventory.pewPews = 1;
     game.session.players[1].position = 20;
     game.roll();
     game.finishAnimation();
-    expect(game.session.phase, TurnPhase.weaponAction);
-    game.skipWeaponAction();
+    expect(game.session.phase, TurnPhase.preMoveWeaponChoice);
+    game.chooseMovement();
+    expect(game.session.players.first.position, 16);
+    expect(game.useWeapon(WeaponType.pewPew, 1), isFalse);
+    game.finishAnimation();
     expect(game.session.phase, TurnPhase.handoff);
     expect(game.session.players.first.inventory.pewPews, 1);
     expect(game.session.players[1].position, 20);
@@ -259,7 +262,7 @@ void main() {
     attacker.inventory
       ..stabbers = 2
       ..stars = 2;
-    game.session.players[1].position = 17;
+    game.session.players[1].position = 15;
     game.roll();
     game.finishAnimation();
     expect(game.useWeapon(WeaponType.stabber, 1), isTrue);
@@ -275,7 +278,7 @@ void main() {
     }
     game.acknowledgeHandoff();
     expect(game.session.currentPlayerIndex, 0);
-    game.session.players[1].position = 23;
+    game.session.players[1].position = 15;
     game.roll();
     game.finishAnimation();
     expect(game.useWeapon(WeaponType.stabber, 1), isTrue);

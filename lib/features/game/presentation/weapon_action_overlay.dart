@@ -59,7 +59,7 @@ class WeaponActionOverlay extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         beforeMoving
-                            ? 'Attack instead of moving. Use one weapon; earn 3 stars and no cash.'
+                            ? 'Use this roll to move OR attack. An attack replaces movement, uses one weapon and earns 3 stars with no cash.'
                             : 'Use one weapon on a target in range; earn 3 stars and no cash.',
                         style: const TextStyle(
                           color: AppTheme.ink,
@@ -71,7 +71,10 @@ class WeaponActionOverlay extends StatelessWidget {
                         builder: (context, bounds) {
                           final groups = [
                             for (final weapon in weapons)
-                              _weaponGroup(weapon, beforeMoving: beforeMoving),
+                              _weaponGroup(
+                                weapon,
+                                sameTileOnly: session.lastDice != 6,
+                              ),
                           ];
                           if (groups.isEmpty) {
                             return const Text(
@@ -135,15 +138,15 @@ class WeaponActionOverlay extends StatelessWidget {
 
   Widget _weaponGroup(
     WeaponType weapon, {
-    required bool beforeMoving,
+    required bool sameTileOnly,
   }) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     mainAxisSize: MainAxisSize.min,
     children: [
       Text(
-        beforeMoving
+        sameTileOnly
             ? '${weapon.label.toUpperCase()} · SAME TILE'
-            : '${weapon.label.toUpperCase()} · WITHIN ${weapon.range} SPACES',
+            : '${weapon.label.toUpperCase()} · WITHIN ${controller.weaponRange(weapon)} SPACES',
         style: const TextStyle(
           color: AppTheme.ink,
           fontSize: 13,
@@ -152,7 +155,7 @@ class WeaponActionOverlay extends StatelessWidget {
       ),
       const SizedBox(height: 3),
       Text(
-        'Owned ${controller.weaponCount(weapon)} · Range ${weapon.range}',
+        'Owned ${controller.weaponCount(weapon)} · Range ${controller.weaponRange(weapon)}',
         style: const TextStyle(color: Color(0xFF475959), fontSize: 12),
       ),
       for (final targetIndex in controller.weaponTargets(weapon))

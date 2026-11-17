@@ -1,3 +1,4 @@
+import 'hospital_stock.dart';
 import 'player_state.dart';
 import 'tile_summary.dart';
 import 'weapon.dart';
@@ -11,6 +12,7 @@ enum TurnPhase {
   jailChoice,
   hospitalChoice,
   shopping,
+  secretSocietyAccess,
   weaponAction,
   preMoveWeaponChoice,
   eventReveal,
@@ -24,6 +26,7 @@ class GameSession {
   GameSession({
     required this.players,
     required this.boardId,
+    Set<String>? computerPlayerIds,
     this.currentPlayerIndex = 0,
     this.round = 1,
     this.lastDice,
@@ -36,16 +39,27 @@ class GameSession {
     this.pendingPoliceJail,
     this.pendingHospital = false,
     this.pendingShopTile,
+    Map<int, HospitalStock>? hospitalStocks,
+    this.hitmanOwnerId,
+    this.hitmanTile,
+    this.hitmanHired = false,
     this.pendingPortalTile,
     List<int>? portalCardDirections,
     this.weaponActionTaken = false,
+    this.attackReplacesMove = false,
     this.weaponRules = const WeaponRules(),
     this.handoffMessage = 'Pass the device to the next player.',
     List<String>? eventDrawPile,
     List<String>? eventDiscardPile,
-  }) : portalCardDirections = portalCardDirections ?? <int>[],
+  }) : computerPlayerIds = Set.of(computerPlayerIds ?? const <String>{}),
+       hospitalStocks = hospitalStocks ?? <int, HospitalStock>{},
+       portalCardDirections = portalCardDirections ?? <int>[],
        eventDrawPile = eventDrawPile ?? <String>[],
        eventDiscardPile = eventDiscardPile ?? <String>[];
+
+  final Set<String> computerPlayerIds;
+  bool get isComputerGame => computerPlayerIds.isNotEmpty;
+  bool get isComputerTurn => computerPlayerIds.contains(currentPlayer.id);
 
   final String boardId;
   final List<PlayerState> players;
@@ -61,19 +75,28 @@ class GameSession {
   int? pendingPoliceJail;
   bool pendingHospital;
   int? pendingShopTile;
+  final Map<int, HospitalStock> hospitalStocks;
+  // Online public snapshots omit these two private contract fields.
+  String? hitmanOwnerId;
+  int? hitmanTile;
+  bool hitmanHired;
   int? pendingPortalTile;
   final List<int> portalCardDirections;
   bool weaponActionTaken;
+  bool attackReplacesMove;
   final WeaponRules weaponRules;
   String handoffMessage;
   final List<String> eventDrawPile;
   final List<String> eventDiscardPile;
 
   PlayerState get currentPlayer => players[currentPlayerIndex];
+  bool get isBoardInteractive =>
+      phase == TurnPhase.ready || phase == TurnPhase.secretSocietyAccess;
 
   Map<String, dynamic> toJson() => {
     'schemaVersion': 3,
     'boardId': boardId,
+    'computerPlayerIds': computerPlayerIds.toList(),
     'players': players.map((p) => p.toJson()).toList(),
     'currentPlayerIndex': currentPlayerIndex,
     'round': round,
@@ -87,9 +110,17 @@ class GameSession {
     'pendingPoliceJail': pendingPoliceJail,
     'pendingHospital': pendingHospital,
     'pendingShopTile': pendingShopTile,
+    'hospitalStocks': {
+      for (final entry in hospitalStocks.entries)
+        '${entry.key}': entry.value.toJson(),
+    },
+    'hitmanHired': hitmanHired,
+    if (hitmanOwnerId != null) 'hitmanOwnerId': hitmanOwnerId,
+    if (hitmanTile != null) 'hitmanTile': hitmanTile,
     'pendingPortalTile': pendingPortalTile,
     'portalCardDirections': portalCardDirections,
     'weaponActionTaken': weaponActionTaken,
+    'attackReplacesMove': attackReplacesMove,
     'weaponRules': weaponRules.toJson(),
     'handoffMessage': handoffMessage,
     'eventDrawPile': eventDrawPile,
@@ -111,6 +142,16 @@ class GameSession {
     if (players.length < 2 || players.length > 5) {
       throw const FormatException('Game requires 2–5 players');
     }
+    final computerIds =
+        (json['computerPlayerIds'] as List<dynamic>? ?? const [])
+            .cast<String>()
+            .toSet();
+    if (computerIds.isNotEmpty && computerIds.length != players.length - 1 ||
+        computerIds.any((id) => !players.any((p) => p.id == id))) {
+      throw const FormatException(
+        'Computer seats require exactly one human player.',
+      );
+    }
     final current = (json['currentPlayerIndex'] as num?)?.toInt() ?? 0;
     if (current < 0 || current >= players.length) {
       throw const FormatException('Invalid player index');
@@ -128,7 +169,11 @@ class GameSession {
     // ready, eventReveal, handoff or completed; discard interrupted animations.
     if (loadedPhase == TurnPhase.rolling ||
         loadedPhase == TurnPhase.animating) {
-      loadedPhase = TurnPhase.ready;
+      loadedPhase =
+          loadedPhase == TurnPhase.animating &&
+              json['attackReplacesMove'] == true
+          ? TurnPhase.specialReview
+          : TurnPhase.ready;
     }
     // A selected mystery card is committed even if its animation is interrupted.
     if (loadedPhase == TurnPhase.portalTravel) {
@@ -194,6 +239,16 @@ class GameSession {
     return GameSession(
       players: players,
       boardId: boardId,
+      computerPlayerIds: computerIds,
+      hospitalStocks: {
+        for (final entry in (json['hospitalStocks'] as Map? ?? {}).entries)
+          int.parse(entry.key as String): HospitalStock.fromJson(
+            Map<String, dynamic>.from(entry.value as Map),
+          ),
+      },
+      hitmanHired: json['hitmanHired'] as bool? ?? false,
+      hitmanOwnerId: json['hitmanOwnerId'] as String?,
+      hitmanTile: (json['hitmanTile'] as num?)?.toInt(),
       currentPlayerIndex: current,
       round: (json['round'] as num?)?.toInt() ?? 1,
       lastDice: (json['lastDice'] as num?)?.toInt(),
@@ -213,6 +268,7 @@ class GameSession {
           ? <int>[]
           : portalDirections,
       weaponActionTaken: json['weaponActionTaken'] as bool? ?? false,
+      attackReplacesMove: json['attackReplacesMove'] as bool? ?? false,
       weaponRules: json['weaponRules'] == null
           ? const WeaponRules()
           : WeaponRules.fromJson(

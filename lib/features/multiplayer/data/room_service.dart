@@ -10,6 +10,9 @@ import '../../../app/theme.dart';
 import '../../../firebase_config.dart';
 import '../../game/application/game_controller.dart';
 import '../../game/domain/board_definition.dart';
+import '../../game/domain/game_session.dart';
+import '../../game/domain/player_icon.dart';
+import '../domain/private_room_state.dart';
 import '../domain/room_protocol.dart';
 
 class RoomService extends ChangeNotifier {
@@ -22,6 +25,30 @@ class RoomService extends ChangeNotifier {
   bool connected = false;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _roomSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _requestsSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _privateSub;
+  Map<String, dynamic>? _privateView;
+  bool get privateViewReady =>
+      room == null ||
+      room!.state.isEmpty ||
+      (jsonDecode(room!.state) as Map)['privateViews'] != true ||
+      _privateView?['revision'] == room!.revision;
+
+  String get visibleOutcome =>
+      privateViewReady && _privateView?['outcome'] is String
+      ? _privateView!['outcome'] as String
+      : room?.outcome ?? '';
+
+  GameSession? get visibleSession {
+    final current = room;
+    if (current == null || current.state.isEmpty) return null;
+    final state = jsonDecode(current.state) as Map<String, dynamic>;
+    return GameSession.fromJson(
+      privateViewReady && _privateView != null
+          ? applyPrivateView(state, _privateView!)
+          : state,
+    );
+  }
+
   Timer? _heartbeat;
   Timer? _liveness;
   bool _disposed = false;
@@ -71,7 +98,8 @@ class RoomService extends ChangeNotifier {
     return name;
   }
 
-  Future<void> create(String name) async {
+  Future<void> create(String name, {PlayerIcon avatar = PlayerIcon.paw}) async {
+    if (!avatar.isSelectable) throw StateError('Choose a character.');
     await connect();
     final random = Random.secure();
     for (var attempt = 0; attempt < 5; attempt++) {
@@ -85,6 +113,7 @@ class RoomService extends ChangeNotifier {
         tx.set(ref, {
           'hostId': uid,
           'members': {uid!: _name(name)},
+          'avatars': {uid!: avatar.name},
           'playerOrder': [uid!],
           'status': 'waiting',
           'activeUid': '',
@@ -110,7 +139,12 @@ class RoomService extends ChangeNotifier {
     throw StateError('Could not create a unique room. Try again.');
   }
 
-  Future<void> join(String code, String name) async {
+  Future<void> join(
+    String code,
+    String name, {
+    PlayerIcon avatar = PlayerIcon.paw,
+  }) async {
+    if (!avatar.isSelectable) throw StateError('Choose a character.');
     await connect();
     final normalized = code.replaceAll(' ', '').toUpperCase();
     if (!RegExp(r'^[A-HJ-NP-Z2-9]{8}$').hasMatch(normalized)) {
@@ -155,6 +189,10 @@ class RoomService extends ChangeNotifier {
           members[uid!] = playerName;
           tx.update(ref, {
             'members': members,
+            'avatars': {
+              ...Map<String, String>.from(data['avatars'] as Map),
+              uid!: avatar.name,
+            },
             'playerOrder': [...data['playerOrder'] as List, uid!],
           });
         });
@@ -197,6 +235,25 @@ class RoomService extends ChangeNotifier {
     _liveness?.cancel();
     _liveness = Timer.periodic(const Duration(seconds: 15), (_) => _emit());
     await _roomSub?.cancel();
+    await _privateSub?.cancel();
+    _privateView = null;
+    _privateSub = _db!
+        .collection('rooms')
+        .doc(code)
+        .collection('private')
+        .doc(uid!)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            _privateView = snapshot.data();
+            _emit();
+          },
+          onError: (Object e) {
+            _privateView = null;
+            error = 'Could not load your private game details. Reconnect.';
+            _emit();
+          },
+        );
     await _preferences.setString(_lastRoomKey, code);
     final first = Completer<void>();
     _roomSub = _db!
@@ -221,6 +278,12 @@ class RoomService extends ChangeNotifier {
               code: code,
               hostId: data['hostId'] as String,
               members: Map<String, String>.from(data['members'] as Map),
+              avatars: {
+                for (final entry in (data['avatars'] as Map? ?? {}).entries)
+                  entry.key as String: PlayerIcon.values.byName(
+                    entry.value as String,
+                  ),
+              },
               playerOrder: List<String>.from(data['playerOrder'] as List),
               status: data['status'] as String,
               revision: data['revision'] as int,
@@ -280,6 +343,23 @@ class RoomService extends ChangeNotifier {
     }
   }
 
+  Future<void> chooseAvatar(PlayerIcon avatar) async {
+    if (!avatar.isSelectable || uid == null || room == null || !connected) {
+      throw StateError('Choose a character while connected to the lobby.');
+    }
+    await _db!.runTransaction((tx) async {
+      final snapshot = await tx.get(_ref);
+      final data = snapshot.data()!;
+      if (data['status'] != 'waiting' ||
+          !(data['members'] as Map).containsKey(uid)) {
+        throw StateError('Characters are locked once the game starts.');
+      }
+      final avatars = Map<String, dynamic>.from(data['avatars'] as Map);
+      avatars[uid!] = avatar.name;
+      tx.update(_ref, {'avatars': avatars});
+    });
+  }
+
   Future<void> start() async {
     if (!isHost || !connected) {
       throw StateError('Only the connected host can start.');
@@ -299,8 +379,12 @@ class RoomService extends ChangeNotifier {
         names: order.map((id) => members[id]!).toList(),
         colors: AppTheme.playerColors.map((c) => c.toARGB32()).toList(),
         board: board,
+        icons: [
+          for (final id in order)
+            PlayerIcon.values.byName((data['avatars'] as Map)[id] as String),
+        ],
       );
-      final state = jsonEncode(game.session.toJson());
+      final state = _writeViews(tx, game.session.toJson(), 1, order: order);
       game.dispose();
       tx.update(_ref, {
         'status': 'playing',
@@ -312,6 +396,27 @@ class RoomService extends ChangeNotifier {
     });
   }
 
+  String _writeViews(
+    Transaction tx,
+    Map<String, dynamic> state,
+    int revision, {
+    required List<String> order,
+    String outcome = '',
+  }) {
+    tx.set(_ref.collection('authority').doc('state'), {
+      'state': jsonEncode(state),
+    });
+    final players = (state['players'] as List).cast<Map>();
+    for (var i = 0; i < players.length; i++) {
+      tx.set(_ref.collection('private').doc(order[i]), {
+        'revision': revision,
+        'outcome': playerOutcome(outcome, players[i]['id'] as String),
+        ...privateSessionView(state, players[i]['id'] as String),
+      });
+    }
+    return jsonEncode(publicSession(state));
+  }
+
   Future<void> _process(
     DocumentReference<Map<String, dynamic>> requestRef,
   ) async {
@@ -319,6 +424,9 @@ class RoomService extends ChangeNotifier {
       await _db!.runTransaction((tx) async {
         final request = await tx.get(requestRef);
         final snapshot = await tx.get(_ref);
+        final authority = await tx.get(
+          _ref.collection('authority').doc('state'),
+        );
         if (!request.exists || !snapshot.exists) return;
         final data = request.data()!;
         final latest = snapshot.data()!;
@@ -331,7 +439,9 @@ class RoomService extends ChangeNotifier {
           playerOrder: List<String>.from(latest['playerOrder'] as List),
           status: latest['status'] as String,
           revision: latest['revision'] as int,
-          state: latest['state'] as String,
+          state:
+              authority.data()?['state'] as String? ??
+              latest['state'] as String,
           outcome: latest['outcome'] as String,
           lastRequestId: latest['lastRequestId'] as String,
           lastError: latest['lastError'] as String,
@@ -353,8 +463,14 @@ class RoomService extends ChangeNotifier {
             board: board,
           );
           update.addAll({
-            'state': result.state,
-            'outcome': result.outcome,
+            'state': _writeViews(
+              tx,
+              jsonDecode(result.state) as Map<String, dynamic>,
+              current.revision + 1,
+              outcome: result.outcome,
+              order: current.playerOrder,
+            ),
+            'outcome': publicOutcome(result.outcome),
             'revision': current.revision + 1,
             'activeUid':
                 current.playerOrder[(jsonDecode(result.state)
@@ -380,7 +496,7 @@ class RoomService extends ChangeNotifier {
     if (!connected ||
         room == null ||
         !room!.hostAvailable ||
-        (room!.activeUid != uid && action != 'playerIcon')) {
+        room!.activeUid != uid) {
       throw StateError('Wait for your turn and a connection to the host.');
     }
     final requestId =
@@ -431,7 +547,13 @@ class RoomService extends ChangeNotifier {
           ..remove(uid);
         final order = List<String>.from(data['playerOrder'] as List)
           ..remove(uid);
-        tx.update(_ref, {'members': members, 'playerOrder': order});
+        final avatars = Map<String, dynamic>.from(data['avatars'] as Map)
+          ..remove(uid);
+        tx.update(_ref, {
+          'members': members,
+          'avatars': avatars,
+          'playerOrder': order,
+        });
       });
     }
     await _preferences.remove(_lastRoomKey);
@@ -443,6 +565,7 @@ class RoomService extends ChangeNotifier {
     _liveness?.cancel();
     _heartbeat?.cancel();
     unawaited(_roomSub?.cancel());
+    unawaited(_privateSub?.cancel());
     unawaited(_requestsSub?.cancel());
     super.dispose();
   }

@@ -41,55 +41,67 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Change Player 1 icon'));
     await tester.tap(find.byTooltip('Change Player 1 icon'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Star'));
-    await tester.tap(find.text('Star'));
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(OutlinedButton),
+      ),
+      findsNWidgets(3),
+    );
+    expect(find.text('Rocket'), findsNothing);
+    await tester.ensureVisible(find.text('Secret Agent'));
+    await tester.tap(find.text('Secret Agent'));
     await tester.pumpAndSettle();
     final avatars = tester
         .widgetList<PlayerAvatar>(find.byType(PlayerAvatar))
         .toList();
-    expect(avatars.first.icon, PlayerIcon.star);
-    expect(avatars[1].icon, PlayerIcon.number);
+    expect(avatars.first.icon, PlayerIcon.secretAgent);
+    expect(avatars[1].icon, PlayerIcon.paw);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Changing an icon updates the board token and saved game', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(900, 600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final board = (await tester.runAsync(
-      () => const BoardRepository().loadReferenceBoard(),
-    ))!;
-    final game = GameController.newGame(
-      names: ['One', 'Two'],
-      colors: [0xFFCC3333, 0xFF33CC33],
-      board: board,
-    );
-    addTearDown(game.dispose);
-    await tester.runAsync(() async {
-      await tester.pumpWidget(MaterialApp(home: GameScreen(controller: game)));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    });
-    await tester.pump();
-    await tester.tap(find.byTooltip('Change player icon'));
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(find.text('Choose player icon'), findsOneWidget);
-    await tester.tap(find.text('Rocket'));
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(game.session.players.first.icon, PlayerIcon.rocket);
-    expect(game.session.players[1].icon, PlayerIcon.number);
-    final token = tester.widget<GameScreen>(find.byType(GameScreen));
-    expect(token.controller.session.players.first.icon, PlayerIcon.rocket);
-    final saved = await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      return SessionStore().load();
-    });
-    expect(saved!.players.first.icon, PlayerIcon.rocket);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+  testWidgets(
+    'Character is locked during the match and its abilities are readable',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final board = (await tester.runAsync(
+        () => const BoardRepository().loadReferenceBoard(),
+      ))!;
+      final game = GameController.newGame(
+        names: ['One', 'Two'],
+        colors: [1, 2],
+        board: board,
+        icons: [PlayerIcon.secretAgent, PlayerIcon.swimmer],
+      );
+      addTearDown(game.dispose);
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(home: GameScreen(controller: game)),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      expect(find.byTooltip('Change player icon'), findsNothing);
+      expect(game.canChangePlayerIcon, isFalse);
+      game.changePlayerIcon(PlayerIcon.paw);
+      expect(game.session.currentPlayer.icon, PlayerIcon.secretAgent);
+      await tester.tap(find.byTooltip('Character abilities'));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('Secret Agent'), findsOneWidget);
+      expect(find.textContaining('Characters are locked'), findsOneWidget);
+      expect(find.text('Choose your character'), findsNothing);
+      final saved = await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        return SessionStore().load();
+      });
+      expect(saved!.players.first.icon, PlayerIcon.secretAgent);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('Board token switches between number and icon glyphs', (
     tester,

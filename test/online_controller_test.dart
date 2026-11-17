@@ -69,36 +69,17 @@ void main() {
     game.dispose();
   });
 
-  test(
-    'Online icon changes wait for the host and work outside your turn',
-    () async {
-      connection.uid = 'u1';
-      expect(client.canAct, isFalse);
-      expect(client.canChangePlayerIcon, isTrue);
-      client.changePlayerIcon(PlayerIcon.paw);
-      expect(connection.actions, ['playerIcon']);
-      expect(connection.arguments, [
-        {'icon': 'paw'},
-      ]);
-      expect(client.session.players[1].icon, PlayerIcon.number);
-      final result = executeRoomCommand(
-        room: connection.room!,
-        senderId: 'u1',
-        expectedRevision: 1,
-        action: 'playerIcon',
-        args: {'icon': 'paw'},
-        board: connection.board,
-      );
-      connection.publish(
-        snapshot(GameSession.fromJson(jsonDecode(result.state)), revision: 2),
-      );
-      expect(client.session.players[1].icon, PlayerIcon.paw);
-      expect(client.session.players.first.icon, PlayerIcon.number);
-      expect(client.localResult, isNull);
-      expect(client.session.currentPlayerIndex, 0);
-      await Future<void>.delayed(Duration.zero);
-    },
-  );
+  test('Online character changes are disabled on every turn', () {
+    expect(client.canChangePlayerIcon, isFalse);
+    client.changePlayerIcon(PlayerIcon.swimmer);
+    expect(connection.actions, isEmpty);
+    connection.uid = 'u1';
+    expect(client.canChangePlayerIcon, isFalse);
+    client.changePlayerIcon(PlayerIcon.secretAgent);
+    expect(connection.actions, isEmpty);
+    expect(client.session.players.first.icon, PlayerIcon.number);
+    expect(client.session.players[1].icon, PlayerIcon.number);
+  });
   test(
     'Only the current seat can send a request and local dice never mutate state',
     () async {
@@ -139,12 +120,8 @@ void main() {
     expect(client.lastOutcome!.path, [1]);
     client.finishAnimation();
     expect(client.session.phase, TurnPhase.ready);
-    expect(
-      client.localResult!.tileSummary!.message,
-      contains('space 0 to space 1'),
-    );
-    expect(client.canAct, isFalse);
-    client.dismissLocalResult();
+    expect(client.localResult, isNull);
+    expect(client.canAct, isTrue);
     expect(connection.actions, isEmpty);
     expect(client.canAct, isTrue);
   });
@@ -359,13 +336,10 @@ void main() {
       expect(client.canAct, isFalse);
       connection.connected = false;
       client.dismissLocalResult();
-      expect(client.localResult!.currentPlayer.id, 'p2');
       expect(
-        client.localResult!.tileSummary!.message,
-        contains('space 0 to space 1'),
-      );
-      client.dismissLocalResult();
-      expect(client.localResult, isNull);
+        client.localResult,
+        isNull,
+      ); // The next ordinary move has no popup.
       expect(connection.actions, isEmpty);
       connection.connected = true;
       expect(client.canAct, isTrue);

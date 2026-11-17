@@ -33,8 +33,7 @@ class TurnResultVisual extends StatelessWidget {
         summary.title.toUpperCase().contains('PEW PEW');
     final drowned =
         summary.finalPosition == 0 &&
-        (source.type == TileType.sea ||
-            summary.message.toLowerCase().contains('drowned'));
+        (source.isWater || summary.message.toLowerCase().contains('drowned'));
     final died = drowned || summary.message.toLowerCase().contains('you died');
     final moved = summary.landedIndex != summary.finalPosition;
     final inventory =
